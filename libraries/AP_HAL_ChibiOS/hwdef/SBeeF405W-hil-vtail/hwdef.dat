@@ -1,0 +1,86 @@
+# hwdef for SpeedyBeeF405WING-hil-vtail
+# SpeedyBee F405 Wing SITL-on-hardware with X-Plane as the physics backend.
+# V-tail layout: CH1=aileron, CH2=vtail_right, CH3=throttle, CH4=vtail_left.
+# ArduPlane mixes elevator+rudder → vtail surfaces; SIM_XPlane demixes for X-Plane.
+#
+# Architecture:
+#   - AP_SIM_FRAME_CLASS=XPlane: SITL XPlane backend runs on the MCU.
+#   - PPP over USART6/SERIAL6 (onboard telemetry port) gives the board an IP.
+#     PC: sudo pppd /dev/tty.usbserial-XXXX 115200 10.0.0.1:10.0.0.2 noauth local nodetach asyncmap 0 novj nopcomp noaccomp lcp-echo-interval 0
+#   - SITL sends vtail/throttle DREFs to X-Plane, receives DATA@ physics back.
+#   - SIMState (GPS/IMU/Baro/Compass backends) reads from X-Plane data.
+#   - Safety switch disabled; servos output immediately on boot.
+#
+# V-tail mixing (ArduPlane channel_function_mixer, MIXING_GAIN=0.5):
+#   CH2 (vtail_right) = (elevator - rudder) * 0.5
+#   CH4 (vtail_left)  = (elevator + rudder) * 0.5
+# SITL demix in xplane_vtail.json uses range=2.0 (=1/MIXING_GAIN) so
+# yoke_pitch/heading recover ±1.0 at full command despite the 0.5 gain.
+#
+# Build:
+#   ./waf configure --board SpeedyBeeF405WING-hil-vtail
+#   ./waf plane
+#
+# X-Plane setup:
+#   Settings → Net Connections → Data: send DATA@ to 10.0.0.2:49005
+#   Rows: 1 (times), 3 (speed), 4 (Gload), 13 (trim), 16 (ang vel),
+#         17 (pitch/roll/hdg), 20 (lat/lon/alt), 21 (local vel),
+#         37 (engine RPM), 38 (prop RPM), 39 (prop pitch)
+
+include ../SpeedyBeeF405WING/hwdef.dat
+
+# ── SITL framework ────────────────────────────────────────────────────────────
+env SIM_ENABLED 1
+
+define AP_SIM_FRAME_CLASS XPlane
+define AP_SIM_FRAME_STRING "xplane:10.0.0.1"
+
+# JSON DREF map embedded in ROMFS for V-tail airframe
+define XPLANE_JSON "@ROMFS/xplane_vtail.json"
+
+define AP_SIM_INS_FILE_ENABLED 0
+
+# ── Hardware overrides ────────────────────────────────────────────────────────
+define AP_BOOTLOADER_FLASHING_ENABLED 0
+
+undef HAL_HAVE_SAFETY_SWITCH
+define HAL_HAVE_SAFETY_SWITCH 0
+
+define HAL_LOGGING_FILESYSTEM_ENABLED 0
+define AP_MAVLINK_FTP_ENABLED 0
+
+# ── Memory optimisations for STM32F405 (192 KB RAM) ──────────────────────────
+define HAL_NAVEKF3_AVAILABLE 0
+
+define EK3_FEATURE_BODY_ODOM 0
+define EK3_FEATURE_EXTERNAL_NAV 0
+define EK3_FEATURE_DRAG_FUSION 0
+
+define HAL_COMPASS_MAX_SENSORS 1
+
+define HAL_ADSB_ENABLED 0
+undef AP_CAMERA_MOUNT_ENABLED
+define AP_CAMERA_MOUNT_ENABLED 0
+undef HAL_MOUNT_ENABLED
+define HAL_MOUNT_ENABLED 0
+undef HAL_MOUNT_SERVO_ENABLED
+define HAL_MOUNT_SERVO_ENABLED 0
+define HAL_PROXIMITY_ENABLED 0
+define HAL_VISUALODOM_ENABLED 0
+define HAL_GENERATOR_ENABLED 0
+define HAL_CRSF_TELEM_ENABLED 0
+define HAL_HOTT_TELEM_ENABLED 0
+define HAL_SUPPORT_RCOUT_SERIAL 0
+undef AP_LANDINGGEAR_ENABLED
+define AP_LANDINGGEAR_ENABLED 0
+
+# ── Networking: PPP over USART6 (onboard telemetry port, SERIAL6) ─────────────
+HAL_USE_PPP TRUE
+define AP_NETWORKING_BACKEND_PPP 1
+define TCPIP_THREAD_STACKSIZE 4096
+define AP_NETWORKING_PORT_STACK_SIZE 2048
+define PPP_BUFSIZE_TX 2048
+define PPP_BUFSIZE_RX 1024
+
+# ROMFS: embed the X-Plane DREF map so no SD card is needed
+ROMFS xplane_vtail.json Tools/autotest/models/xplane_vtail.json

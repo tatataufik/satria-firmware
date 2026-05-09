@@ -154,7 +154,7 @@ void ModeTracking::update()
     {
         const float cruise        = plane.aparm.throttle_cruise.get();
         const float nav_pitch_rad = plane.nav_pitch_cd * 0.01f * (M_PI / 180.0f);
-        const float pitch_err     = ahrs.get_pitch() - nav_pitch_rad;
+        const float pitch_err     = ahrs.get_pitch_rad() - nav_pitch_rad;
         const float pid_out       = plane.g2.tracking_throt_pid.update_all(
                                         pitch_err, 0.0f, dt_s) * ramp;
         const float throttle = constrain_float(cruise + pid_out,
@@ -170,7 +170,7 @@ void ModeTracking::update()
                             (double)ex_raw, (double)ey_raw);
             gcs().send_text(MAV_SEVERITY_INFO,
                             "TRK p_ahrs=%.1f nav=%.1f err=%.1f thr=%.1f%%",
-                            (double)degrees(ahrs.get_pitch()),
+                            (double)degrees(ahrs.get_pitch_rad()),
                             (double)degrees(nav_pitch_rad),
                             (double)degrees(pitch_err),
                             (double)(throttle));

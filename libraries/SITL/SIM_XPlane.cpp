@@ -296,6 +296,8 @@ bool XPlane::load_dref_map(const char *map_json)
                 add_dref(label, DRefType::VTAIL_ELEVATOR, d);
             } else if (strcmp(type_s, "vtail_rudder") == 0) {
                 add_dref(label, DRefType::VTAIL_RUDDER, d);
+            } else if (strcmp(type_s, "running") == 0) {
+                add_dref(label, DRefType::RUNNING, d);
             } else {
                 ::printf("Invalid dref type %s for %s in %s", type_s, label, map_filename);
             }
@@ -833,6 +835,12 @@ void XPlane::send_drefs(const struct sitl_input &input)
             const float denom = servo_half_up(d->channel) + servo_half_up(d->channel2);
             v = d->range * (ch2 - ch1) / denom;
             v = constrain_float(v, -d->range, d->range);
+            break;
+        }
+        case DRefType::RUNNING: {
+            const SRV_Channel *ch = SRV_Channels::srv_channel(d->channel - 1);
+            const float mn = ch ? (float)ch->get_output_min() : 1000.0f;
+            v = (hal.util->get_soft_armed() && input.servos[d->channel-1] > mn) ? d->range : 0.0f;
             break;
         }
         default:

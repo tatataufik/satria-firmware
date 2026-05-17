@@ -1,0 +1,29 @@
+# XPlane DREF map for X-frame quadcopter (FRAME_CLASS=1, FRAME_TYPE=1).
+# Requires a custom X-Plane aircraft (.acf) with 4 electric motors placed at
+# the quad arm endpoints and configured as blade-element-theory rotors in
+# Plane Maker.
+#
+# ArduCopter H-frame motor order (FRAME_CLASS=1 FRAME_TYPE=3, same X positions reversed spin):
+#   CH1 = Motor 0   45°  CW   front-right → engine[0]
+#   CH2 = Motor 1 -135°  CW   rear-left   → engine[1]
+#   CH3 = Motor 2  -45°  CCW  front-left  → engine[2]
+#   CH4 = Motor 3  135°  CCW  rear-right  → engine[3]
+#
+# Place engines in Plane Maker in this exact order (Engine Specs, engines 1-4):
+#   1=front-right  2=rear-left  3=front-left  4=rear-right
+# If X-Plane rolls/pitches the wrong way, the engine placement doesn't match.
+
+{
+    "settings" : { "debug" : 0 },
+
+    # Disable X-Plane joystick and throttle so all inputs come from us
+    "sim/operation/override/override_joystick"      : { "type" : "fixed", "value" : 1 },
+    "sim/operation/override/override_throttles"     : { "type" : "fixed", "value" : 1 },
+    "sim/operation/override/override_flightcontrol" : { "type" : "fixed", "value" : 1 },
+
+    # Individual motor throttle commands (0.0 – 1.0)
+    "sim/flightmodel/engine/ENGN_thro_use[0]" : { "type" : "range", "range" : 1, "channel" : 1 },
+    "sim/flightmodel/engine/ENGN_thro_use[1]" : { "type" : "range", "range" : 1, "channel" : 2 },
+    "sim/flightmodel/engine/ENGN_thro_use[2]" : { "type" : "range", "range" : 1, "channel" : 3 },
+    "sim/flightmodel/engine/ENGN_thro_use[3]" : { "type" : "range", "range" : 1, "channel" : 4 }
+}

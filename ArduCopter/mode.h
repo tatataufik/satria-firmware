@@ -101,6 +101,7 @@ public:
         AUTOROTATE =   26,  // Autonomous autorotation
         AUTO_RTL =     27,  // Auto RTL, this is not a true mode, AUTO will report as this mode if entered to perform a DO_LAND_START Landing sequence
         TURTLE =       28,  // Flip over after crash
+        TRACKING =     29,  // Visual-servo tracking via external seeker error
 
         // Mode number 30 reserved for "offboard" for external/lua control.
 
@@ -2152,3 +2153,36 @@ private:
 
 };
 #endif
+
+#if MODE_TRACKING_ENABLED
+// ── ModeTracking ──────────────────────────────────────────────────────────────
+// Visual-servo tracking mode driven by external seeker error via TRACKING_MESSAGE.
+// errorx → roll command; errory → pitch command; fixed throttle from TRK_THROTTLE.
+class ModeTracking : public Mode {
+public:
+    using Mode::Mode;
+    Number mode_number() const override { return Number::TRACKING; }
+
+    bool init(bool ignore_checks) override;
+    void exit() override;
+    void run() override;
+
+    bool requires_position() const override { return false; }
+    bool has_manual_throttle() const override { return false; }
+    bool allows_arming(AP_Arming::Method method) const override { return false; }
+    bool is_autopilot() const override { return true; }
+
+    void handle_tracking_error(float errorx_rad, float errory_rad);
+
+protected:
+    const char *name()  const override { return "TRACKING"; }
+    const char *name4() const override { return "TRAK"; }
+
+private:
+    float    _errorx_rad{};
+    float    _errory_rad{};
+    uint32_t _prev_update_ms{};
+    uint32_t _lock_stable_ms{};
+    uint32_t _last_log_ms{};
+};
+#endif  // MODE_TRACKING_ENABLED

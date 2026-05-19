@@ -1200,11 +1200,33 @@ void GCS_MAVLINK_Copter::handle_message(const mavlink_message_t &msg)
         copter.g2.toy_mode.handle_message(msg);
         break;
 #endif
+#if MODE_TRACKING_ENABLED
+    case MAVLINK_MSG_ID_TRACKING_MESSAGE:
+        handle_tracking_message(msg);
+        break;
+#endif
     default:
         GCS_MAVLINK::handle_message(msg);
         break;
     }
 }
+
+#if MODE_TRACKING_ENABLED
+void GCS_MAVLINK_Copter::handle_tracking_message(const mavlink_message_t &msg)
+{
+    mavlink_tracking_message_t pkt;
+    mavlink_msg_tracking_message_decode(&msg, &pkt);
+
+    if (copter.flightmode != &copter.mode_tracking) {
+        return;
+    }
+
+    const float max_rad = radians(copter.g2.tracking_max_deg.get());
+    copter.mode_tracking.handle_tracking_error(
+        pkt.errorx * max_rad,
+        pkt.errory * max_rad);
+}
+#endif  // MODE_TRACKING_ENABLED
 
 MAV_RESULT GCS_MAVLINK_Copter::handle_flight_termination(const mavlink_command_int_t &packet) {
 #if AP_COPTER_ADVANCED_FAILSAFE_ENABLED

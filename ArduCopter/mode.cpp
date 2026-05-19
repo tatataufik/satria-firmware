@@ -152,6 +152,11 @@ Mode *Copter::mode_from_mode_num(const Mode::Number mode)
             return &mode_turtle;
 #endif
 
+#if MODE_TRACKING_ENABLED
+        case Mode::Number::TRACKING:
+            return &mode_tracking;
+#endif
+
         default:
             break;
     }

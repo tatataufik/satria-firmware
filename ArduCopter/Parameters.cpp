@@ -1169,6 +1169,20 @@ const AP_Param::GroupInfo ParametersG2::var_info2[] = {
     // @Increment: 0.1
     AP_GROUPINFO("PILOT_TKO_ALT_M", 20, ParametersG2, pilot_takeoff_alt_m, PILOT_TKO_ALT_M_DEFAULT),
 
+#if MODE_TRACKING_ENABLED
+    AP_SUBGROUPINFO(tracking_roll_pid,  "TRK_ROLL_", 21, ParametersG2, AC_PID),
+    AP_SUBGROUPINFO(tracking_pitch_pid, "TRK_PTCH_", 22, ParametersG2, AC_PID),
+    AP_GROUPINFO("TRK_MAX_DEG",  23, ParametersG2, tracking_max_deg,        30.0f),
+    AP_GROUPINFO("TRK_DBAND",    24, ParametersG2, tracking_deadband_deg,   0.573f),
+    AP_GROUPINFO("TRK_TIMEOUT",  25, ParametersG2, tracking_timeout_ms,     1000),
+    AP_GROUPINFO("TRK_SETTLE_S", 26, ParametersG2, tracking_settle_s,       2.0f),
+    AP_GROUPINFO("TRK_THROTTLE", 27, ParametersG2, tracking_throttle,       0.5f),
+    AP_GROUPINFO("TRK_TGT_LAT",  28, ParametersG2, tracking_target_lat,     -6.897367724f),
+    AP_GROUPINFO("TRK_TGT_LON",  29, ParametersG2, tracking_target_lon,     107.566559898f),
+    AP_GROUPINFO("TRK_TGT_ALT",  30, ParametersG2, tracking_target_alt_msl, 744.0f),
+    AP_GROUPINFO("TRK_CLOSE_M",  31, ParametersG2, tracking_close_m,        1000.0f),
+#endif
+
     // ID 62 is reserved for the AP_SUBGROUPEXTENSION
 
     AP_GROUPEND

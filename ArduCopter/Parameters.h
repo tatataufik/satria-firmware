@@ -729,6 +729,20 @@ public:
     AP_Float rc_tuning2_max;
 #endif  // AP_RC_TRANSMITTER_TUNING_ENABLED
 
+#if MODE_TRACKING_ENABLED
+    AC_PID tracking_roll_pid {200.0f, 10.0f, 5.0f, 0.0f, 3000.0f, 0.0f, 0.0f, 20.0f, 0.0f};
+    AC_PID tracking_pitch_pid{100.0f, 500.0f, 0.0f, 0.0f, 3000.0f, 0.0f, 0.0f, 20.0f, 0.0f};
+    AP_Float tracking_max_deg;        // TRK_MAX_DEG
+    AP_Float tracking_deadband_deg;   // TRK_DBAND
+    AP_Int16 tracking_timeout_ms;     // TRK_TIMEOUT
+    AP_Float tracking_settle_s;       // TRK_SETTLE_S
+    AP_Float tracking_throttle;       // TRK_THROTTLE (0-1, fixed throttle in tracking mode)
+    AP_Float tracking_target_lat;     // TRK_TGT_LAT
+    AP_Float tracking_target_lon;     // TRK_TGT_LON
+    AP_Float tracking_target_alt_msl; // TRK_TGT_ALT
+    AP_Float tracking_close_m;        // TRK_CLOSE_M
+#endif
+
 #if MODE_RTL_ENABLED
     void *mode_rtl_ptr;
 #endif

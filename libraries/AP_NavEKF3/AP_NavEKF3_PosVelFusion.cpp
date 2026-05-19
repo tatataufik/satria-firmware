@@ -376,8 +376,30 @@ bool NavEKF3_core::resetHeightDatum(void)
     ftype oldHgt = -stateStruct.position.z;
     // reset the barometer so that it reads zero at the current height
     dal.baro().update_calibration();
-    // reset the height state
+
+    // clear the baro data buffer
+    storedBaro.reset();
+
+    // reset the vertical position and velocity states
     stateStruct.position.z = 0.0f;
+    stateStruct.velocity.z = 0.0f;
+    for (uint8_t i=0; i<imu_buffer_length; i++) {
+        storedOutput[i].position.z = stateStruct.position.z;
+        storedOutput[i].velocity.z = stateStruct.velocity.z;
+    }
+    outputDataNew.position.z = outputDataDelayed.position.z = stateStruct.position.z;
+    outputDataNew.velocity.z = outputDataDelayed.velocity.z = stateStruct.velocity.z;
+    vertCompFiltState.vel = outputDataNew.velocity.z;
+
+    // baroHgtOffset is a slow first-order filter (calcFiltBaroOffset)
+    // tracking baroDataDelayed.hgt + position.z.  Post-reset baro
+    // reads 0 and position.z is 0 so the steady-state offset is 0;
+    // without this, hgtMea = baroDataDelayed.hgt - baroHgtOffset
+    // would feed a non-zero observation into the EKF for the ~1 s
+    // the filter takes to relax, producing a post-reset altitude
+    // transient.
+    baroHgtOffset = 0.0f;
+
     // adjust the height of the EKF origin so that the origin plus baro height before and after the reset is the same
     if (validOrigin) {
         if (!gpsGoodToAlign) {
@@ -1120,9 +1142,8 @@ void NavEKF3_core::FuseVelPosNED()
                 // calculate the Kalman gain and calculate innovation variances
                 varInnovVelPos[obsIndex] = P[stateIndex][stateIndex] + R_OBS[obsIndex];
                 SK = 1.0f/varInnovVelPos[obsIndex];
-                for (uint8_t i= 0; i<=9; i++) {
-                    Kfusion[i] = P[i][stateIndex]*SK;
-                }
+
+                uint32_t kalman_mask = (1<<10)-1; // values to calculate in Kfusion (others are set to zero)
 
                 // inhibit delta angle bias state estimation by setting Kalman gains to zero
                 if (!inhibitDelAngBiasStates) {
@@ -1140,15 +1161,10 @@ void NavEKF3_core::FuseVelPosNED()
                                 poorObservability = fabsF(prevTnb.c.z) > M_SQRT1_2;
                             }
                         }
-                        if (poorObservability) {
-                            Kfusion[i] = 0.0;
-                        } else {
-                            Kfusion[i] = P[i][stateIndex]*SK;
+                        if (!poorObservability) {
+                            kalman_mask |= (1<<i);
                         }
                     }
-                } else {
-                    // zero indexes 10 to 12
-                    zero_range(&Kfusion[0], 10, 12);
                 }
 
                 // Inhibit delta velocity bias state estimation by setting Kalman gains to zero
@@ -1158,96 +1174,60 @@ void NavEKF3_core::FuseVelPosNED()
                 if (!horizInhibit && !inhibitDelVelBiasStates && !badIMUdata) {
                     for (uint8_t i = 13; i<=15; i++) {
                         if (!dvelBiasAxisInhibit[i-13]) {
-                            Kfusion[i] = P[i][stateIndex]*SK;
-                        } else {
-                            Kfusion[i] = 0.0f;
+                            kalman_mask |= (1<<i);
                         }
                     }
-                } else {
-                    // zero indexes 13 to 15
-                    zero_range(&Kfusion[0], 13, 15);
                 }
 
                 // inhibit magnetic field state estimation by setting Kalman gains to zero
                 if (!inhibitMagStates) {
-                    for (uint8_t i = 16; i<=21; i++) {
-                        Kfusion[i] = P[i][stateIndex]*SK;
-                    }
-                } else {
-                    // zero indexes 16 to 21
-                    zero_range(&Kfusion[0], 16, 21);
+                    kalman_mask |= (1<<16) | (1<<17) | (1<<18) | (1<<19) | (1<<20) | (1<<21);
                 }
 
                 // inhibit wind state estimation by setting Kalman gains to zero
                 if (!inhibitWindStates && !treatWindStatesAsTruth) {
-                    Kfusion[22] = P[22][stateIndex]*SK;
-                    Kfusion[23] = P[23][stateIndex]*SK;
-                } else {
-                    // zero indexes 22 to 23
-                    zero_range(&Kfusion[0], 22, 23);
+                    kalman_mask |= (1<<22) | (1<<23);
                 }
 
-                // update the covariance - take advantage of direct observation of a single state at index = stateIndex to reduce computations
-                // this is a numerically optimised implementation of standard equation P = (I - K*H)*P;
-                for (uint8_t i= 0; i<=stateIndexLim; i++) {
-                    for (uint8_t j= 0; j<=stateIndexLim; j++) {
-                        KHP[i][j] = Kfusion[i] * P[stateIndex][j];
+                for (auto i=0; i<24; i++) {
+                    ftype res = 0;
+                    if (kalman_mask & (1<<i)) {
+                        res = P[i][stateIndex]*SK;
+                    }
+                    Kfusion[i] = res;
+                }
+
+                // one element of H is 1, compiler will optimize it away
+                Vector24 Hfusion;
+                Hfusion[stateIndex] = 1;
+
+                // correct the covariance P = (I - K*H)*P = P - K*H*P. take advantage of
+                // the zero elements of H to reduce the number of operations.
+                for (unsigned i = 0; i<=stateIndexLim; i++) {
+                    // j as the inner loop allows the compiler to hoist the KH product
+                    // to save computation, and do the inner indexing more efficiently.
+                    for (unsigned j = 0; j<=stateIndexLim; j++) {
+                        ftype res = 0;
+                        res += (Kfusion[i] * Hfusion[stateIndex]) * P[stateIndex][j];
+                        KHP[i][j] = res;
                     }
                 }
-                // Check that we are not going to drive any variances negative and skip the update if so
-                bool healthyFusion = true;
-                for (uint8_t i= 0; i<=stateIndexLim; i++) {
-                    if (KHP[i][i] > P[i][i]) {
-                        healthyFusion = false;
-                    }
-                }
-                if (healthyFusion) {
-                    // update the covariance matrix
-                    for (uint8_t i= 0; i<=stateIndexLim; i++) {
-                        for (uint8_t j= 0; j<=stateIndexLim; j++) {
-                            P[i][j] = P[i][j] - KHP[i][j];
-                        }
-                    }
 
-                    // update states and renormalise the quaternions
-                    for (uint8_t i = 0; i<=stateIndexLim; i++) {
-                        statesArray[i] = statesArray[i] - Kfusion[i] * innovVelPos[obsIndex];
-                    }
-                    stateStruct.quat.normalize();
-
-                    // force the covariance matrix to be symmetrical and limit the variances to prevent ill-conditioning.
-                    ForceSymmetry();
-                    ConstrainVariances();
-
-                    // record good fusion status
-                    if (obsIndex == 0) {
-                        faultStatus.bad_nvel = false;
-                    } else if (obsIndex == 1) {
-                        faultStatus.bad_evel = false;
-                    } else if (obsIndex == 2) {
-                        faultStatus.bad_dvel = false;
-                    } else if (obsIndex == 3) {
-                        faultStatus.bad_npos = false;
-                    } else if (obsIndex == 4) {
-                        faultStatus.bad_epos = false;
-                    } else if (obsIndex == 5) {
-                        faultStatus.bad_dpos = false;
-                    }
-                } else {
-                    // record bad fusion status
-                    if (obsIndex == 0) {
-                        faultStatus.bad_nvel = true;
-                    } else if (obsIndex == 1) {
-                        faultStatus.bad_evel = true;
-                    } else if (obsIndex == 2) {
-                        faultStatus.bad_dvel = true;
-                    } else if (obsIndex == 3) {
-                        faultStatus.bad_npos = true;
-                    } else if (obsIndex == 4) {
-                        faultStatus.bad_epos = true;
-                    } else if (obsIndex == 5) {
-                        faultStatus.bad_dpos = true;
-                    }
+                // finish fusion from KHP and Kfusion
+                const bool fault = FinishFusion(innovVelPos[obsIndex]);
+                // record health status
+                if (obsIndex == 0) {
+                    faultStatus.bad_nvel = fault;
+                } else if (obsIndex == 1) {
+                    faultStatus.bad_evel = fault;
+                } else if (obsIndex == 2) {
+                    faultStatus.bad_dvel = fault;
+                } else if (obsIndex == 3) {
+                    faultStatus.bad_npos = fault;
+                } else if (obsIndex == 4) {
+                    faultStatus.bad_epos = fault;
+                } else if (obsIndex == 5) {
+                    faultStatus.bad_dpos = fault;
                 }
             }
         }
@@ -2056,33 +2036,9 @@ void NavEKF3_core::FuseBodyVel()
                 }
             }
 
-            // Check that we are not going to drive any variances negative and skip the update if so
-            bool healthyFusion = true;
-            for (uint8_t i= 0; i<=stateIndexLim; i++) {
-                if (KHP[i][i] > P[i][i]) {
-                    healthyFusion = false;
-                }
-            }
-
-            if (healthyFusion) {
-                // update the covariance matrix
-                for (uint8_t i= 0; i<=stateIndexLim; i++) {
-                    for (uint8_t j= 0; j<=stateIndexLim; j++) {
-                        P[i][j] = P[i][j] - KHP[i][j];
-                    }
-                }
-
-                // correct the state vector
-                for (uint8_t j= 0; j<=stateIndexLim; j++) {
-                    statesArray[j] = statesArray[j] - Kfusion[j] * innovBodyVel[obsIndex];
-                }
-                stateStruct.quat.normalize();
-
-                // force the covariance matrix to be symmetrical and limit the variances to prevent ill-conditioning.
-                ForceSymmetry();
-                ConstrainVariances();
-            } else {
-                // record bad axis
+            // finish fusion from KHP and Kfusion
+            if (FinishFusion(innovBodyVel[obsIndex])) {
+                // fault, record bad axis
                 if (obsIndex == 0) {
                     faultStatus.bad_xvel = true;
                 } else if (obsIndex == 1) {
@@ -2090,7 +2046,6 @@ void NavEKF3_core::FuseBodyVel()
                 } else if (obsIndex == 2) {
                     faultStatus.bad_zvel = true;
                 }
-
             }
         }
     }

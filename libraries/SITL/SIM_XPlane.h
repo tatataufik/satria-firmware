@@ -107,6 +107,7 @@ private:
         uint8_t channel2;  // secondary channel (elevon_left for elevon types)
         float range;
         float fixed_value;
+        bool invert;       // negate value before sending (e.g. right aileron from single channel)
         float last_sent = NAN;   // last value sent — skip if change < deadband
     };
 

@@ -46,8 +46,9 @@ SERVO7_FUNCTION 35   # Motor3  front-left  CCW
 SERVO8_FUNCTION 36   # Motor4  rear-right  CCW
 
 # ── V-tail mixing ─────────────────────────────────────────────────────────────
-# range=1/MIXING_GAIN in xplane_vtail_vtol.json compensates this value.
-MIXING_GAIN 0.5
+# MIXING_GAIN 1.0: full servo travel for full stick input.
+# xplane_vtail_vtol.json maps CH2/CH4 directly to vstab surface datarefs.
+MIXING_GAIN 1.0
 
 # ── RC input channel mapping ──────────────────────────────────────────────────
 RCMAP_ROLL      1

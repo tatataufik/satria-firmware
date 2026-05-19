@@ -51,8 +51,10 @@ SERVO2_FUNCTION 80   # Vtail_right  (elevator - rudder)
 SERVO3_FUNCTION 70   # Throttle
 SERVO4_FUNCTION 79   # Vtail_left   (elevator + rudder)
 
-# MIXING_GAIN: scales vtail surface deflection (default 0.5)
-MIXING_GAIN 0.5
+# MIXING_GAIN 1.0: full servo travel for full stick input.
+# With direct surface mapping (no demix), range compensation is not needed — surfaces are
+# driven at full deflection. Keep below 1.0 only if saturation at combined elev+rud is a problem.
+MIXING_GAIN 1.0
 
 # ── RC input channel mapping ──────────────────────────────────────────────────
 RCMAP_ROLL      1

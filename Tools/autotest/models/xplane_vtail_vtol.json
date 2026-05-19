@@ -1,4 +1,4 @@
-# XPlane DREF map for V-tail QuadPlane VTOL.
+# XPlane DREF map — V-tail QuadPlane VTOL, direct surface control
 # Requires a custom X-Plane aircraft (.acf) with 5 electric motors and V-tail surfaces in Plane Maker:
 #   engine[0] front-right  quad lift  CW   ← SERVO5 / Motor1
 #   engine[1] rear-left    quad lift  CW   ← SERVO6 / Motor2
@@ -6,12 +6,14 @@
 #   engine[3] rear-right   quad lift  CCW  ← SERVO8 / Motor4
 #   engine[4] pusher/nose  forward        ← SERVO3 / Throttle  (CH3)
 #
-# Control surfaces driven via yoke DREFs (X-Plane applies V-tail mix internally):
-#   yoke_roll_ratio    ← CH1 (Aileron)
-#   yoke_pitch_ratio   ← vtail_elevator demix from CH2 + CH4
-#   yoke_heading_ratio ← vtail_rudder   demix from CH2 + CH4
+# Direct surface control (PX4xplane-style, no joystick override):
+#   CH1 → wing1r_ail1def (invert) + wing1l_ail1def  (aileron)
+#   CH2 → vstab1_rud1def                             (vtail_right, ArduPlane mixer pre-applied)
+#   CH4 → vstab2_rud1def                             (vtail_left,  ArduPlane mixer pre-applied)
 #
-# range=1.0 for vtail demix: compensates MIXING_GAIN=0.5 so yoke reaches ±1.0 at full command.
+# ArduPlane vtail mixer (MIXING_GAIN=1.0):
+#   vtail_right (CH2) = (elevator - rudder) * 1.0
+#   vtail_left  (CH4) = (elevator + rudder) * 1.0
 #
 # ArduPilot QuadPlane H-frame motor order (Q_FRAME_CLASS=1 Q_FRAME_TYPE=3):
 #   CH5=Motor1  front-right  CW   CH6=Motor2  rear-left   CW
@@ -20,26 +22,22 @@
 {
     "settings" : { "debug" : 0 },
 
-    # Disable X-Plane joystick, throttle, and flight control so all inputs come from ArduPlane
-    "sim/operation/override/override_joystick"      : { "type" : "fixed", "value" : 1 },
-    "sim/operation/override/override_throttles"     : { "type" : "fixed", "value" : 1 },
-    "sim/flightmodel/misc/jato_left"                : { "type" : "fixed", "value" : 1.0 },
+    "sim/operation/override/override_throttles"       : { "type" : "fixed", "value" : 1 },
+    "sim/operation/override/override_control_surfaces": { "type" : "fixed", "value" : 1 },
+    "sim/flightmodel/misc/jato_left"                  : { "type" : "fixed", "value" : 1.0 },
 
-    # ── Fixed-wing control surfaces ──────────────────────────────────────────
-    # Aileron on CH1
-    "sim/joystick/yoke_roll_ratio" : { "type" : "angle", "range" : 1.0, "channel" : 1 },
+    # Aileron — single ArduPlane channel drives both wings oppositely
+    "sim/flightmodel/controls/wing1r_ail1def" : { "type" : "angle", "range" : 20.0, "channel" : 1, "invert" : true },
+    "sim/flightmodel/controls/wing1l_ail1def" : { "type" : "angle", "range" : 20.0, "channel" : 1 },
 
-    # V-tail demix: channel=vtail_right (CH2), channel2=vtail_left (CH4)
-    # range=1.0 compensates MIXING_GAIN=0.5 → yoke reaches ±1.0 at full throw
-    "sim/joystick/yoke_pitch_ratio"   : { "type" : "vtail_elevator", "range" : 1.0, "channel" : 2, "channel2" : 4 },
-    "sim/joystick/yoke_heading_ratio" : { "type" : "vtail_rudder",   "range" : 1.0, "channel" : 2, "channel2" : 4 },
+    # V-tail surfaces — direct angle mapping (ArduPlane vtail mixer pre-applied on CH2/CH4)
+    "sim/flightmodel/controls/vstab1_rud1def" : { "type" : "angle", "range" : 20.0, "channel" : 2 },
+    "sim/flightmodel/controls/vstab2_rud1def" : { "type" : "angle", "range" : 20.0, "channel" : 4 },
 
-    # ── Forward pusher motor — CH3 → engine[4] ───────────────────────────────
+    # Forward pusher motor — CH3 → engine[4]
     "sim/flightmodel/engine/ENGN_thro_use[4]" : { "type" : "range", "range" : 1, "channel" : 3 },
 
-    # ── Quad lift motors — H-frame, CH5-CH8 → engine[0-3] ───────────────────
-    # ENGN_thro_use: throttle 0-100% mapped from PWM 1000-2000
-    # ENGN_running:  1 when armed+PWM>min, 0 otherwise — prevents X-Plane engine idle at 0% throttle
+    # Quad lift motors — H-frame, CH5-CH8 → engine[0-3]
     "sim/flightmodel/engine/ENGN_thro_use[0]" : { "type" : "range",   "range" : 1, "channel" : 5 },
     "sim/flightmodel/engine/ENGN_running[0]"  : { "type" : "running", "range" : 1, "channel" : 5 },
     "sim/flightmodel/engine/ENGN_thro_use[1]" : { "type" : "range",   "range" : 1, "channel" : 6 },

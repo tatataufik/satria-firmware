@@ -178,6 +178,7 @@ void XPlane::add_dref(const char *name, DRefType type, const AP_JSON::value &dre
     } else {
         d->range = dref.get("range").get<double>();
         d->channel = dref.get("channel").get<double>();
+        d->invert = dref.contains("invert") && dref.get("invert").get<bool>();
         if (d->type == DRefType::ELEVON_AILERON || d->type == DRefType::ELEVON_ELEVATOR ||
             d->type == DRefType::VTAIL_ELEVATOR  || d->type == DRefType::VTAIL_RUDDER) {
             d->channel2 = dref.get("channel2").get<double>();
@@ -753,21 +754,8 @@ void XPlane::send_drefs(const struct sitl_input &input)
         return h > 1.0f ? h : 500.0f;
     };
 
-    if (dref_cursor == nullptr) {
-        dref_cursor = drefs;
-    }
-    auto *start = dref_cursor;
-    bool wrapped = false;
-
-    while (!wrapped || dref_cursor != start) {
-        auto *d = dref_cursor;
-        if (d == nullptr) {
-            dref_cursor = drefs;
-            wrapped = true;
-            continue;
-        }
-        dref_cursor = d->next;
-
+    // Send ALL non-FIXED DREFs every call (loopback UDP; no PPP bandwidth limit).
+    for (auto *d = drefs; d; d = d->next) {
         float v;
         switch (d->type) {
         case DRefType::ANGLE: {
@@ -847,13 +835,16 @@ void XPlane::send_drefs(const struct sitl_input &input)
             continue;
         }
 
+        if (d->invert) {
+            v = -v;
+        }
+
         // Deadband check — skip if value unchanged
         if (!isnan(d->last_sent) && fabsf(v - d->last_sent) < DREF_DEADBAND) {
             continue;
         }
         d->last_sent = v;
         send_dref(d->name, v);
-        return;   // one packet per call — done
     }
 }
 

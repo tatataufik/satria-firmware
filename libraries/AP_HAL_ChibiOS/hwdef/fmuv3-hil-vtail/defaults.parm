@@ -61,13 +61,10 @@ SERVO2_FUNCTION 80   # Vtail_right  (elevator - rudder)
 SERVO3_FUNCTION 70   # Throttle
 SERVO4_FUNCTION 79   # Vtail_left   (elevator + rudder)
 
-# MIXING_GAIN 0.5: each vtail surface gets half the pitch/yaw command, leaving
-# headroom for simultaneous pitch+yaw without saturating either surface.
-# xplane_vtail.json uses range=2.0 (=1/MIXING_GAIN) to compensate so that
-# X-Plane yoke_pitch/heading recover ±1.0 at full command.
-# Do NOT increase this to 1.0: at 100% elevator + 100% rudder, one vtail surface
-# would saturate and the other would be at zero — pitch/yaw authority degraded.
-MIXING_GAIN 0.5
+# MIXING_GAIN 1.0: full servo travel for full stick input.
+# xplane_vtail.json maps CH2/CH4 directly to vstab surface datarefs — no demix
+# compensation needed. Saturation (elev+rud > 1.0) is handled by ArduPlane clipping.
+MIXING_GAIN 1.0
 
 # ── RC input channel mapping ──────────────────────────────────────────────────
 RCMAP_ROLL      1

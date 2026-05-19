@@ -1,12 +1,19 @@
-# XPlane DREF map file for a simple plane
-# assumes: Aileron, Elevator, Throttle, Rudder, flaps
+# XPlane DREF map — standard AERT aircraft, direct surface control
+# assumes: CH1=Aileron, CH2=Elevator, CH3=Throttle, CH4=Rudder, CH5=Flaps
+#
+# Direct surface datarefs — no joystick override needed.
+# override_control_surfaces prevents X-Plane from re-computing surfaces from yoke.
+#
+#   CH1 → wing1r_ail1def (invert) + wing1l_ail1def  (differential aileron)
+#   CH2 → hstab1_elv1def                             (elevator)
+#   CH4 → vstab1_rud1def                             (rudder)
 
 {
     "settings" : { "debug" : 0 },
 
-    "sim/operation/override/override_joystick"  : { "type" : "fixed", "value" : 1 },
-    "sim/operation/override/override_throttles" : { "type" : "fixed", "value" : 1 },
-    "sim/flightmodel/misc/jato_left"            : { "type" : "fixed", "value" : 1.0 },
+    "sim/operation/override/override_throttles"       : { "type" : "fixed", "value" : 1 },
+    "sim/operation/override/override_control_surfaces": { "type" : "fixed", "value" : 1 },
+    "sim/flightmodel/misc/jato_left"                  : { "type" : "fixed", "value" : 1.0 },
 
     # forward throttle, up to 4 engines
     "sim/flightmodel/engine/ENGN_thro_use[0]" : { "type" : "range", "range" : 1, "channel" : 3 },
@@ -14,15 +21,20 @@
     "sim/flightmodel/engine/ENGN_thro_use[2]" : { "type" : "range", "range" : 1, "channel" : 3 },
     "sim/flightmodel/engine/ENGN_thro_use[3]" : { "type" : "range", "range" : 1, "channel" : 3 },
 
-    # control surfaces, using yoke positions not surface overrides
-    "sim/joystick/yoke_roll_ratio" : { "type" : "angle", "range" : 1, "channel" : 1 },
-    "sim/joystick/yoke_pitch_ratio" : { "type" : "angle", "range" : 1, "channel" : 2 },
-    "sim/joystick/yoke_heading_ratio" : { "type" : "angle", "range" : 1, "channel" : 4 },
+    # Aileron — single channel drives both wings oppositely
+    "sim/flightmodel/controls/wing1r_ail1def" : { "type" : "angle", "range" : 20.0, "channel" : 1, "invert" : true },
+    "sim/flightmodel/controls/wing1l_ail1def" : { "type" : "angle", "range" : 20.0, "channel" : 1 },
 
-    # assume flaps on channel 5
+    # Elevator
+    "sim/flightmodel/controls/hstab1_elv1def" : { "type" : "angle", "range" : 20.0, "channel" : 2 },
+
+    # Rudder
+    "sim/flightmodel/controls/vstab1_rud1def" : { "type" : "angle", "range" : 20.0, "channel" : 4 },
+
+    # Flaps on channel 5
     "sim/cockpit2/controls/flap_ratio" : { "type" : "range", "range" : 1, "channel" : 5 },
 
-    # joystick inputs
+    # joystick inputs (RC from physical joystick into SITL)
     "axis6" : { "type" : "joyaxis", "channel" : 1, "input_min" : 0.2, "input_max" : 0.8 },
     "axis5" : { "type" : "joyaxis", "channel" : 2, "input_min" : 0.2, "input_max" : 0.8 },
     "axis4" : { "type" : "joyaxis", "channel" : 3, "input_min" : 0.8, "input_max" : 0.2 },

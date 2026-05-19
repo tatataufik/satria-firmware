@@ -11,11 +11,11 @@
 #   - SIMState (GPS/IMU/Baro/Compass backends) reads from X-Plane data.
 #   - Safety switch disabled; servos output immediately on boot.
 #
-# V-tail mixing (ArduPlane channel_function_mixer, MIXING_GAIN=0.5):
-#   CH2 (vtail_right) = (elevator - rudder) * 0.5
-#   CH4 (vtail_left)  = (elevator + rudder) * 0.5
-# SITL demix in xplane_vtail.json uses range=2.0 (=1/MIXING_GAIN) so
-# yoke_pitch/heading recover ±1.0 at full command despite the 0.5 gain.
+# V-tail mixing (ArduPlane channel_function_mixer, MIXING_GAIN=1.0):
+#   CH2 (vtail_right) = (elevator - rudder) * 1.0
+#   CH4 (vtail_left)  = (elevator + rudder) * 1.0
+# xplane_vtail.json maps CH2/CH4 directly to vstab surface datarefs —
+# no demix needed; override_control_surfaces prevents X-Plane recomputing surfaces.
 #
 # Build:
 #   ./waf configure --board SpeedyBeeF405WING-hil-vtail

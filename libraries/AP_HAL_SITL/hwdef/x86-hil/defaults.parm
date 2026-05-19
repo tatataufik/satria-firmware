@@ -3,14 +3,20 @@
 # X-Plane provides physics; SITL sensor backends read from SIMState which
 # is populated by the XPlane UDP data stream.
 #
-# Build:  ./waf configure --board sitl && ./waf plane
-# Run:    sim_vehicle.py -v ArduPlane -f plane-elevon-x86-hil --model xplane
+# Build:  ./waf configure --board x86-hil && ./waf plane
+# Run:    sim_vehicle.py -v ArduPlane --model xplane --map --console
 #
 # Differences from fmuv3-hil:
 #   - EKF3 enabled  (no STM32F427 gyro limitation on x86)
 #   - No SCHED_LOOP_RATE cap (x86 scheduler can handle 400 Hz)
 #   - Logging enabled to disk (no SD-card constraint)
 #   - No PPP/NET setup (SITL XPlane backend uses direct UDP sockets)
+
+# ── Servo output functions — standard 4-channel fixed-wing ───────────────────
+SERVO1_FUNCTION 4    # Aileron
+SERVO2_FUNCTION 19   # Elevator
+SERVO3_FUNCTION 70   # Throttle
+SERVO4_FUNCTION 21   # Rudder
 
 # ── AHRS / attitude source ────────────────────────────────────────────────────
 # AHRS_EKF_TYPE 10 = SIM (AP_AHRS_SIM backend).

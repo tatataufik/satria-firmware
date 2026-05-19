@@ -178,6 +178,7 @@ void XPlane::add_dref(const char *name, DRefType type, const AP_JSON::value &dre
     } else {
         d->range = dref.get("range").get<double>();
         d->channel = dref.get("channel").get<double>();
+        d->invert = dref.contains("invert") && dref.get("invert").get<bool>();
         if (d->type == DRefType::ELEVON_AILERON || d->type == DRefType::ELEVON_ELEVATOR ||
             d->type == DRefType::VTAIL_ELEVATOR  || d->type == DRefType::VTAIL_RUDDER) {
             d->channel2 = dref.get("channel2").get<double>();
@@ -296,6 +297,8 @@ bool XPlane::load_dref_map(const char *map_json)
                 add_dref(label, DRefType::VTAIL_ELEVATOR, d);
             } else if (strcmp(type_s, "vtail_rudder") == 0) {
                 add_dref(label, DRefType::VTAIL_RUDDER, d);
+            } else if (strcmp(type_s, "running") == 0) {
+                add_dref(label, DRefType::RUNNING, d);
             } else {
                 ::printf("Invalid dref type %s for %s in %s", type_s, label, map_filename);
             }
@@ -751,21 +754,8 @@ void XPlane::send_drefs(const struct sitl_input &input)
         return h > 1.0f ? h : 500.0f;
     };
 
-    if (dref_cursor == nullptr) {
-        dref_cursor = drefs;
-    }
-    auto *start = dref_cursor;
-    bool wrapped = false;
-
-    while (!wrapped || dref_cursor != start) {
-        auto *d = dref_cursor;
-        if (d == nullptr) {
-            dref_cursor = drefs;
-            wrapped = true;
-            continue;
-        }
-        dref_cursor = d->next;
-
+    // Send ALL non-FIXED DREFs every call (loopback UDP; no PPP bandwidth limit).
+    for (auto *d = drefs; d; d = d->next) {
         float v;
         switch (d->type) {
         case DRefType::ANGLE: {
@@ -835,8 +825,18 @@ void XPlane::send_drefs(const struct sitl_input &input)
             v = constrain_float(v, -d->range, d->range);
             break;
         }
+        case DRefType::RUNNING: {
+            const SRV_Channel *ch = SRV_Channels::srv_channel(d->channel - 1);
+            const float mn = ch ? (float)ch->get_output_min() : 1000.0f;
+            v = (hal.util->get_soft_armed() && input.servos[d->channel-1] > mn) ? d->range : 0.0f;
+            break;
+        }
         default:
             continue;
+        }
+
+        if (d->invert) {
+            v = -v;
         }
 
         // Deadband check — skip if value unchanged
@@ -845,7 +845,6 @@ void XPlane::send_drefs(const struct sitl_input &input)
         }
         d->last_sent = v;
         send_dref(d->name, v);
-        return;   // one packet per call — done
     }
 }
 

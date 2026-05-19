@@ -1,12 +1,11 @@
-# x86-hil-copter: SITL board for HIL with X-Plane on x86/laptop — helicopter/copter airframe.
-# Inherits the base SITL HAL; builds natively on x86, no cross-compile needed.
-# Uses xplane_heli.json DREF map: collective on CH3, cyclic roll CH1, cyclic pitch CH2, yaw CH4.
+# x86-hil-copter: SITL board for HIL with X-Plane on x86/laptop, ArduCopter.
+# Vehicle: ArduCopter X-frame quadcopter (FRAME_CLASS=1, FRAME_TYPE=3).
+# Requires a custom X-Plane aircraft with 4 electric motors (see xplane_quad.json).
 #
-# Build:  ./waf configure --board sitl && ./waf copter
-# Run:    sim_vehicle.py -v ArduCopter -f heli-x86-hil --model xplane
+# Build:  ./waf configure --board x86-hil-copter && ./waf copter
+# Run:    sim_vehicle.py -v ArduCopter --model xplane --map --console
 #
 # Parameters for the HIL/XPlane session are in defaults.parm.
 include ../sitl/hwdef.dat
 
-# Use the helicopter DREF map for X-Plane.
-define XPLANE_JSON "xplane_heli.json"
+define XPLANE_JSON "xplane_quad.json"

@@ -1,18 +1,22 @@
 # Default parameters for x86-hil-copter (SITL-on-laptop with X-Plane backend)
-# Target machine: x86 PC / laptop running ArduCopter as SITL binary.
-# X-Plane provides helicopter/copter physics; SITL sensor backends read from
-# SIMState, which is populated by the XPlane UDP data stream.
+# Target: x86 PC / laptop running ArduCopter as SITL binary.
+# X-Plane provides physics via a custom quad aircraft with 4 electric motors.
+# Each motor receives an independent throttle command via xplane_quad.json.
 #
-# Build:  ./waf configure --board sitl && ./waf copter
-# Run:    sim_vehicle.py -v ArduCopter -f heli-x86-hil --model xplane
-#
-# Differences from x86-hil-vtail:
-#   - No ARSPD_TYPE (copter does not use airspeed)
-#   - No servo vtail mixing or MIXING_GAIN
-#   - No ground-roll takeoff parameters
+# Build:  ./waf configure --board x86-hil-copter && ./waf copter
+# Run:    sim_vehicle.py -v ArduCopter --model xplane --map --console
+
+# ── Frame ─────────────────────────────────────────────────────────────────────
+# FRAME_CLASS 1 = Quad, FRAME_TYPE 3 = H configuration.
+# Motor order (H-frame — same positions as vtail-vtol quad):
+#   CH1 = M1 front-right  (CW)   CH2 = M2 rear-left   (CW)
+#   CH3 = M3 front-left  (CCW)   CH4 = M4 rear-right  (CCW)
+FRAME_CLASS 1
+FRAME_TYPE  3
 
 # ── AHRS / attitude source ────────────────────────────────────────────────────
-# AHRS_EKF_TYPE 10 = SIM backend, attitude read directly from X-Plane quaternion.
+# AHRS_EKF_TYPE 10 = SIM backend: attitude read directly from X-Plane quaternion.
+# Guarantees zero-lag heading agreement without EKF convergence delay.
 AHRS_EKF_TYPE 10
 EK3_ENABLE 1
 EK2_ENABLE 0
@@ -20,7 +24,7 @@ EK2_ENABLE 0
 # ── Sensors — SITL backends ──────────────────────────────────────────────────
 GPS1_TYPE 100
 
-# ── Compass — keep only one SITL instance ────────────────────────────────────
+# ── Compass — SITL backend ────────────────────────────────────────────────────
 COMPASS_USE  1
 COMPASS_USE2 0
 COMPASS_USE3 0
@@ -29,15 +33,12 @@ SIM_MAG3_DEVID 0
 
 # ── Safety / arming ───────────────────────────────────────────────────────────
 BRD_SAFETY_DEFLT 0
-ARMING_SKIPCHK -1
-ARMING_REQUIRE 1
+ARMING_SKIPCHK  -1
+ARMING_REQUIRE   1
 
 # ── RC ───────────────────────────────────────────────────────────────────────
-THR_FAILSAFE 0
+THR_FAILSAFE     0
 RC_OVERRIDE_TIME -1
-
-# ── SITL speedup ─────────────────────────────────────────────────────────────
-SIM_SPEEDUP 1
 
 # ── RC input channel mapping ──────────────────────────────────────────────────
 RCMAP_ROLL      1
@@ -45,8 +46,19 @@ RCMAP_PITCH     2
 RCMAP_THROTTLE  3
 RCMAP_YAW       4
 
+# ── Motor settings ────────────────────────────────────────────────────────────
+MOT_PWM_TYPE  0
+MOT_PWM_MIN   1000
+MOT_PWM_MAX   2000
+MOT_SPIN_ARM  0.10
+MOT_SPIN_MIN  0.15
+MOT_THST_EXPO 0.65
+
+# ── SITL speedup ─────────────────────────────────────────────────────────────
+SIM_SPEEDUP 1
+
 # ── SITL servo override ───────────────────────────────────────────────────────
-SIM_OH_MASK 255
+SIM_OH_MASK 0
 
 # ── SITL home position — Bandung WICC ─────────────────────────────────────────
 SIM_OPOS_LAT -6.897434
@@ -59,6 +71,11 @@ TRK_TGT_LAT -6.897367724
 TRK_TGT_LON  107.566559898
 TRK_TGT_ALT  744.0
 
-# ── Networking ────────────────────────────────────────────────────────────────
-# On x86/SITL the XPlane backend uses direct UDP sockets — no PPP needed.
-# GCS (QGC / MAVProxy) connects to the SITL MAVLink port (default TCP 5760 / UDP 14550).
+# ── Default flight modes ──────────────────────────────────────────────────────
+# ALTHOLD (2) is safest for initial sim testing — throttle holds altitude.
+FLTMODE1 2
+FLTMODE2 2
+FLTMODE3 2
+FLTMODE4 2
+FLTMODE5 2
+FLTMODE6 2

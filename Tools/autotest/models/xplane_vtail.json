@@ -1,35 +1,40 @@
-# XPlane DREF map file for a V-tail aircraft
-# assumes: SERVO1=aileron (CH1), SERVO2=vtail_right (CH2), SERVO3=throttle (CH3), SERVO4=vtail_left (CH4)
+# XPlane DREF map — V-tail aircraft, direct surface control (PX4xplane-style)
 #
-# ArduPlane V-tail mixing (channel_function_mixer):
+# Servo → X-Plane flight-model surface mapping (no joystick override for surfaces;
+# override_joystick removed so X-Plane does not re-write surface datarefs from yoke=0):
+#   CH1 (SERVO1, aileron)      → wing1r_ail1def  (normal)
+#                              → wing1l_ail1def  (inverted — single ArduPlane aileron channel)
+#   CH2 (SERVO2, vtail_right)  → vstab1_rud1def  (ArduPlane vtail mixer already applied)
+#   CH3 (SERVO3, throttle)     → ENGN_thro_use
+#   CH4 (SERVO4, vtail_left)   → vstab2_rud1def  (ArduPlane vtail mixer already applied)
+#
+# ArduPlane vtail mixer (channel_function_mixer):
 #   vtail_right (CH2) = (elevator - rudder) * MIXING_GAIN
 #   vtail_left  (CH4) = (elevator + rudder) * MIXING_GAIN
 #
-# SIM_XPlane demixes back to pure pitch/yaw for X-Plane yoke inputs:
-#   yoke_pitch_ratio   = -range * (vtail_right + vtail_left - 3000) / 1000   [vtail_elevator]
-#   yoke_heading_ratio =  range * (vtail_left  - vtail_right)        / 1000   [vtail_rudder]
+# With MIXING_GAIN=1.0 in defaults.parm, full stick → full surface travel.
+# range=20 matches ±20° deflection on the X-Plane model.
 #
-# range = 1/MIXING_GAIN = 2.0: compensates MIXING_GAIN=0.5 so yoke reaches ±1.0 at full command.
-# Without this, MIXING_GAIN halves the vtail surface travel and the demixed yoke only reaches ±0.5.
-#
-# X-Plane model must be configured with V-tail in Plane Maker so that
-# yoke_pitch and yoke_heading drive the physical V-tail surfaces correctly.
+# Aileron inversion: ArduPlane uses a single aileron channel (positive = roll right).
+# X-Plane needs left and right ailerons to deflect oppositely:
+#   wing1r: positive actuator → +20°
+#   wing1l: positive actuator → -20° (achieved via "invert": true)
 
 {
     "settings" : { "debug" : 0 },
 
-    "sim/operation/override/override_joystick"  : { "type" : "fixed", "value" : 1 },
-    "sim/operation/override/override_throttles" : { "type" : "fixed", "value" : 1 },
-    "sim/flightmodel/misc/jato_left"            : { "type" : "fixed", "value" : 1.0 },
+    "sim/operation/override/override_throttles"       : { "type" : "fixed", "value" : 1 },
+    "sim/operation/override/override_control_surfaces": { "type" : "fixed", "value" : 1 },
+    "sim/flightmodel/misc/jato_left"                  : { "type" : "fixed", "value" : 1.0 },
 
-    # aileron on CH1 — direct angle mapping
-    "sim/joystick/yoke_roll_ratio" : { "type" : "angle", "range" : 1.0, "channel" : 1 },
+    # Aileron — single ArduPlane channel drives both wings (left wing inverted)
+    "sim/flightmodel/controls/wing1r_ail1def" : { "type" : "angle", "range" : 20.0, "channel" : 1, "invert" : true },
+    "sim/flightmodel/controls/wing1l_ail1def" : { "type" : "angle", "range" : 20.0, "channel" : 1 },
 
-    # vtail demix: channel=vtail_right (CH2), channel2=vtail_left (CH4)
-    # range=2.0 = 1/MIXING_GAIN compensates for MIXING_GAIN 0.5 in defaults.parm
-    "sim/joystick/yoke_pitch_ratio"   : { "type" : "vtail_elevator", "range" : 1.0, "channel" : 2, "channel2" : 4 },
-    "sim/joystick/yoke_heading_ratio" : { "type" : "vtail_rudder",   "range" : 1.0, "channel" : 2, "channel2" : 4 },
+    # V-tail surfaces — direct angle mapping (ArduPlane vtail mixer pre-applied on CH2/CH4)
+    "sim/flightmodel/controls/vstab1_rud1def" : { "type" : "angle", "range" : 20.0, "channel" : 2 },
+    "sim/flightmodel/controls/vstab2_rud1def" : { "type" : "angle", "range" : 20.0, "channel" : 4 },
 
-    # throttle on CH3
+    # Throttle
     "sim/flightmodel/engine/ENGN_thro_use[0]" : { "type" : "range", "range" : 1, "channel" : 3 }
 }

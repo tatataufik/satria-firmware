@@ -1,0 +1,49 @@
+# XPlane DREF map — V-tail QuadPlane VTOL, direct surface control
+# Requires a custom X-Plane aircraft (.acf) with 5 electric motors and V-tail surfaces in Plane Maker:
+#   engine[0] front-right  quad lift  CW   ← SERVO5 / Motor1
+#   engine[1] rear-left    quad lift  CW   ← SERVO6 / Motor2
+#   engine[2] front-left   quad lift  CCW  ← SERVO7 / Motor3
+#   engine[3] rear-right   quad lift  CCW  ← SERVO8 / Motor4
+#   engine[4] pusher/nose  forward        ← SERVO3 / Throttle  (CH3)
+#
+# Direct surface control (PX4xplane-style, no joystick override):
+#   CH1 → wing1r_ail1def (invert) + wing1l_ail1def  (aileron)
+#   CH2 → vstab1_rud1def                             (vtail_right, ArduPlane mixer pre-applied)
+#   CH4 → vstab2_rud1def                             (vtail_left,  ArduPlane mixer pre-applied)
+#
+# ArduPlane vtail mixer (MIXING_GAIN=1.0):
+#   vtail_right (CH2) = (elevator - rudder) * 1.0
+#   vtail_left  (CH4) = (elevator + rudder) * 1.0
+#
+# ArduPilot QuadPlane H-frame motor order (Q_FRAME_CLASS=1 Q_FRAME_TYPE=3):
+#   CH5=Motor1  front-right  CW   CH6=Motor2  rear-left   CW
+#   CH7=Motor3  front-left  CCW   CH8=Motor4  rear-right  CCW
+
+{
+    "settings" : { "debug" : 0 },
+
+    "sim/operation/override/override_throttles"       : { "type" : "fixed", "value" : 1 },
+    "sim/operation/override/override_control_surfaces": { "type" : "fixed", "value" : 1 },
+    "sim/flightmodel/misc/jato_left"                  : { "type" : "fixed", "value" : 1.0 },
+
+    # Aileron — single ArduPlane channel drives both wings oppositely
+    "sim/flightmodel/controls/wing1r_ail1def" : { "type" : "angle", "range" : 20.0, "channel" : 1, "invert" : true },
+    "sim/flightmodel/controls/wing1l_ail1def" : { "type" : "angle", "range" : 20.0, "channel" : 1 },
+
+    # V-tail surfaces — direct angle mapping (ArduPlane vtail mixer pre-applied on CH2/CH4)
+    "sim/flightmodel/controls/vstab1_rud1def" : { "type" : "angle", "range" : 20.0, "channel" : 2 },
+    "sim/flightmodel/controls/vstab2_rud1def" : { "type" : "angle", "range" : 20.0, "channel" : 4 },
+
+    # Forward pusher motor — CH3 → engine[4]
+    "sim/flightmodel/engine/ENGN_thro_use[4]" : { "type" : "range", "range" : 1, "channel" : 3 },
+
+    # Quad lift motors — H-frame, CH5-CH8 → engine[0-3]
+    "sim/flightmodel/engine/ENGN_thro_use[0]" : { "type" : "range",   "range" : 1, "channel" : 5 },
+    "sim/flightmodel/engine/ENGN_running[0]"  : { "type" : "running", "range" : 1, "channel" : 5 },
+    "sim/flightmodel/engine/ENGN_thro_use[1]" : { "type" : "range",   "range" : 1, "channel" : 6 },
+    "sim/flightmodel/engine/ENGN_running[1]"  : { "type" : "running", "range" : 1, "channel" : 6 },
+    "sim/flightmodel/engine/ENGN_thro_use[2]" : { "type" : "range",   "range" : 1, "channel" : 7 },
+    "sim/flightmodel/engine/ENGN_running[2]"  : { "type" : "running", "range" : 1, "channel" : 7 },
+    "sim/flightmodel/engine/ENGN_thro_use[3]" : { "type" : "range",   "range" : 1, "channel" : 8 },
+    "sim/flightmodel/engine/ENGN_running[3]"  : { "type" : "running", "range" : 1, "channel" : 8 }
+}

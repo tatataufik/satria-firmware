@@ -96,6 +96,7 @@ private:
         ELEVON_ELEVATOR = 4,  // recovers elevator from two elevon channels
         VTAIL_ELEVATOR  = 5,  // recovers elevator from two vtail channels (right+left)/2
         VTAIL_RUDDER    = 6,  // recovers rudder    from two vtail channels (left-right)/2
+        RUNNING         = 7,  // outputs range when armed and PWM > min, 0 otherwise (for ENGN_running)
     };
 
     struct DRef {
@@ -106,6 +107,7 @@ private:
         uint8_t channel2;  // secondary channel (elevon_left for elevon types)
         float range;
         float fixed_value;
+        bool invert;       // negate value before sending (e.g. right aileron from single channel)
         float last_sent = NAN;   // last value sent — skip if change < deadband
     };
 

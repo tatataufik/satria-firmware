@@ -39,11 +39,23 @@
 
 extern const AP_HAL::HAL& hal;
 
-#if APM_BUILD_TYPE(APM_BUILD_Heli)
+#ifndef XPLANE_JSON
+#if APM_BUILD_TYPE(APM_BUILD_ArduCopter)
+#define XPLANE_JSON "xplane_quad.json"
+#elif APM_BUILD_TYPE(APM_BUILD_Heli)
 #define XPLANE_JSON "xplane_heli.json"
 #else
 #define XPLANE_JSON "xplane_plane.json"
 #endif
+#endif // XPLANE_JSON
+
+// Per-airframe DREF map variants. Selected at runtime from the `frame_str`
+// substring (sim_vehicle.py --model {xplane-vtail,xplane-elevon,xplane-vtail-vtol}:
+// host:port). XPLANE_JSON above is the default.
+#define XPLANE_JSON_ELEVON    "xplane_elevon.json"
+#define XPLANE_JSON_VTAIL     "xplane_vtail.json"
+#define XPLANE_JSON_VTAILVTOL "xplane_vtail_vtol.json"
+#define XPLANE_JSON_QUAD_JOY  "xplane_quad_joy.json"
 
 // DATA@ frame types. Thanks to TauLabs xplanesimulator.h
 // (which strangely enough acknowledges APM as a source!)
@@ -96,9 +108,37 @@ XPlane::XPlane(const char *frame_str) :
     Aircraft(frame_str)
 {
     use_time_sync = false;
+    // Parse frame_str host[:port]. Examples:
+    //   sim_vehicle.py --model xplane-vtail:127.0.0.1         -> host=127.0.0.1, default bind_port=49001
+    //   sim_vehicle.py --model xplane-vtail:127.0.0.1:49005   -> host=127.0.0.1, bind_port=49005
+    // (single-colon form preserved for backwards compatibility.)
     const char *colon = strchr(frame_str, ':');
     if (colon) {
-        xplane_ip = colon+1;
+        const char *ip_start = colon + 1;
+        const char *colon2 = strchr(ip_start, ':');
+        if (colon2) {
+            size_t ip_len = colon2 - ip_start;
+            if (ip_len >= sizeof(xplane_ip_buf)) {
+                ip_len = sizeof(xplane_ip_buf) - 1;
+            }
+            memcpy(xplane_ip_buf, ip_start, ip_len);
+            xplane_ip_buf[ip_len] = '\0';
+            xplane_ip = xplane_ip_buf;
+            bind_port = atoi(colon2 + 1);
+        } else {
+            xplane_ip = ip_start;
+        }
+    }
+
+    // SIM_XP_BIND_PORT param overrides the port from the frame string (or
+    // the compiled-in default of 49001) when non-zero. Lets the user point
+    // the bridge at a different X-Plane "send DATA@ to" port without
+    // changing the sim_vehicle.py invocation.
+    {
+        auto *_sitl = AP::sitl();
+        if (_sitl != nullptr && _sitl->xplane_bind_port > 0) {
+            bind_port = uint16_t(_sitl->xplane_bind_port.get());
+        }
     }
 
     socket_in.bind("0.0.0.0", bind_port);
@@ -117,8 +157,32 @@ XPlane::XPlane(const char *frame_str) :
     AP_Param::set_default_by_name("SERVO5_MAX", 2000);
 #endif
 
-    if (!load_dref_map(XPLANE_JSON)) {
-        AP_HAL::panic("%s failed to load", XPLANE_JSON);
+    // Per-airframe DREF map selection from frame_str substring.
+    //   sim_vehicle.py --model x-plane:host[:port]              → XPLANE_JSON (default)
+    //   sim_vehicle.py --model xplane-vtail:host[:port]         → xplane_vtail.json
+    //   sim_vehicle.py --model xplane-elevon:host[:port]        → xplane_elevon.json
+    //   sim_vehicle.py --model xplane-vtail-vtol:host[:port]    → xplane_vtail_vtol.json
+    //   (-joy suffix selects xplane_quad_joy.json for the quad joystick map.)
+    const bool elevon = strstr(frame_str, "-elevon") != nullptr;
+    const bool vtail  = strstr(frame_str, "-vtail")  != nullptr;
+    const bool vtol   = strstr(frame_str, "-vtol")   != nullptr;
+    const bool joy    = strstr(frame_str, "-joy")    != nullptr;
+
+    const char *xplane_json;
+    if (vtail && vtol) {
+        xplane_json = XPLANE_JSON_VTAILVTOL;
+    } else if (vtail) {
+        xplane_json = XPLANE_JSON_VTAIL;
+    } else if (elevon) {
+        xplane_json = XPLANE_JSON_ELEVON;
+    } else if (joy) {
+        xplane_json = XPLANE_JSON_QUAD_JOY;
+    } else {
+        xplane_json = XPLANE_JSON;
+    }
+
+    if (!load_dref_map(xplane_json)) {
+        AP_HAL::panic("%s failed to load", xplane_json);
     }
 }
 
@@ -142,6 +206,10 @@ void XPlane::add_dref(const char *name, DRefType type, const AP_JSON::value &dre
         d->range = dref.get("range").get<double>();
         d->channel = dref.get("channel").get<double>();
     }
+    // Optional negate-before-send flag (ignored for FIXED). Used to mirror a
+    // single ArduPlane channel onto two X-Plane surfaces with opposite sign
+    // (e.g. paired ailerons, elevon outer/inner pairs, v-tail demix).
+    d->invert = dref.contains("invert") && dref.get("invert").get<bool>();
     // add to linked list
     d->next = drefs;
     drefs = d;
@@ -337,7 +405,12 @@ void XPlane::deselect_code(uint8_t code)
 */
 bool XPlane::receive_data(void)
 {
-    uint8_t pkt[10000];
+    // `static` so the UDP receive buffer lives in BSS instead of on the
+    // stack — ChibiOS task stacks are 1300 B, so anything bigger blows the
+    // -Werror=frame-larger-than=1300 check on fmuv3-hil-* builds.
+    // 2048 B = ~3x largest X-Plane DATA@/RREF packet we'll see over PPP,
+    // and stays under PPP_BUFSIZE_TX (2048) on the bridge side.
+    static uint8_t pkt[2048];
     uint8_t *p = &pkt[5];
     const uint8_t pkt_len = 36;
     Location loc {};
@@ -386,7 +459,13 @@ bool XPlane::receive_data(void)
     }
     
     while (len >= pkt_len) {
-        const float *data = (const float *)p;
+        // p is at offset 5 from the buffer (after "DATA\0" header).
+        // On Cortex-M4 with FPU, VLDR requires 4-byte alignment; casting an
+        // unaligned uint8_t* straight to float* and dereferencing emits VLDR
+        // and HardFaults. Copy the 36-byte row into an aligned local array
+        // before treating it as floats. code is read as a byte (always safe).
+        float data[9];
+        memcpy(data, p, pkt_len);
         uint8_t code = p[0];
         int8_t idx = find_data_index(code);
         if (idx == -1) {
@@ -614,17 +693,45 @@ void XPlane::handle_rref(const uint8_t *pkt, uint32_t len)
 */
 void XPlane::send_drefs(const struct sitl_input &input)
 {
-    for (const auto *d = drefs; d; d=d->next) {
+    if (drefs == nullptr) {
+        return;
+    }
+#if CONFIG_HAL_BOARD == HAL_BOARD_SITL
+    // Localhost UDP: send every DRef every call, no bandwidth concern.
+    for (const auto *d = drefs; d; d = d->next) {
+#else
+    // PPP@115200 ~= 11 KB/s. Each DREF packet is 509 bytes (X-Plane
+    // protocol, can't be shrunk). Walk the list one entry per call so the
+    // 25 Hz cap in update() keeps outbound at ~12.7 KB/s — fits the link.
+    if (next_dref_to_send == nullptr) {
+        next_dref_to_send = drefs;
+    }
+    const struct DRef *d = next_dref_to_send;
+    next_dref_to_send = d->next;   // advance for next call; head-wrap above
+    {
+#endif
         switch (d->type) {
 
         case DRefType::ANGLE: {
             float v  = d->range * (input.servos[d->channel-1]-1500)/500.0;
+            if (d->invert) { v = -v; }
             send_dref(d->name, v);
             break;
         }
 
         case DRefType::RANGE: {
-            float v  = d->range * (input.servos[d->channel-1]-1000)/1000.0;
+            // RANGE is the type used for throttle (e.g. ENGN_thro_use).
+            // Force value to 0 while disarmed so X-Plane keeps the engine
+            // off / props stationary until ArduPilot has actually armed.
+            // (Surface ANGLEs are left alone — they should follow stick
+            //  input even when disarmed for pre-flight servo checks.)
+            float v;
+            if (!hal.util->get_soft_armed()) {
+                v = 0.0f;
+            } else {
+                v = d->range * (input.servos[d->channel-1]-1000)/1000.0;
+                if (d->invert) { v = -v; }
+            }
             send_dref(d->name, v);
             break;
         }
@@ -643,13 +750,18 @@ void XPlane::send_drefs(const struct sitl_input &input)
 */
 void XPlane::send_dref(const char *name, float value)
 {
-    struct PACKED {
-        uint8_t  marker[5] { 'D', 'R', 'E', 'F', '0' };
+    // `static` so the 500-byte name buffer lives in BSS, not on the stack —
+    // ChibiOS task stacks (1300 B) can't hold a 10 KB frame. Single-threaded
+    // access from the SIMState scheduler tick so reusing the buffer is safe.
+    static struct PACKED {
+        uint8_t  marker[5];
         float value;
         char name[500];
-    } d {};
+    } d;
+    memcpy(d.marker, "DREF\0", 5);
     d.value = value;
-    strcpy(d.name, name);
+    memset(d.name, 0, sizeof(d.name));
+    strncpy(d.name, name, sizeof(d.name) - 1);
     socket_out.send(&d, sizeof(d));
     if (dref_debug > 0) {
         ::printf("-> %s : %.3f\n", name, value);
@@ -661,15 +773,19 @@ void XPlane::send_dref(const char *name, float value)
 */
 void XPlane::request_dref(const char *name, uint8_t code, uint32_t rate)
 {
-    struct PACKED {
-        uint8_t  marker[5] { 'R', 'R', 'E', 'F', '0' };
+    // `static` so the 400-byte name buffer lives in BSS, not on the stack —
+    // see send_dref() above for the ChibiOS rationale.
+    static struct PACKED {
+        uint8_t  marker[5];
         uint32_t rate_hz;
         uint32_t code;
         char name[400];
-    } d {};
+    } d;
+    memcpy(d.marker, "RREF\0", 5);
     d.rate_hz = rate;
     d.code = code; // given back in responses
-    strcpy(d.name, name);
+    memset(d.name, 0, sizeof(d.name));
+    strncpy(d.name, name, sizeof(d.name) - 1);
     socket_in.sendto(&d, sizeof(d), xplane_ip, xplane_port);
 }
 
@@ -684,7 +800,21 @@ void XPlane::request_drefs(void)
 void XPlane::update(const struct sitl_input &input)
 {
     if (receive_data()) {
+#if CONFIG_HAL_BOARD == HAL_BOARD_SITL
+        // Localhost UDP — no bandwidth concerns, send every DATA tick.
         send_drefs(input);
+#else
+        // PPP@115200 ~= 11 KB/s. A single send_dref() is 509 bytes
+        // (5-byte marker + 4-byte float + 500-byte name field, fixed by
+        // X-Plane's protocol). With 5-6 DREFs per call at 20 Hz that's
+        // ~60 KB/s — 5x over PPP capacity, packets get dropped and X-Plane
+        // never sees the control commands. Cap at 25 Hz on hardware.
+        const uint32_t now_ms = AP_HAL::millis();
+        if (now_ms - last_dref_ms >= 40) {
+            last_dref_ms = now_ms;
+            send_drefs(input);
+        }
+#endif
     }
 
     uint32_t now = AP_HAL::millis();

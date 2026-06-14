@@ -22,7 +22,7 @@
 
 #if AP_SIM_XPLANE_ENABLED
 
-#include <AP_HAL/utility/Socket_native.h>
+#include <AP_HAL/utility/Socket.h>   // generic SocketAPM (uses host sockets on SITL, lwIP on ChibiOS)
 #include <AP_Filesystem/AP_Filesystem.h>
 
 #include "SIM_Aircraft.h"
@@ -63,11 +63,12 @@ private:
     }
     
     const char *xplane_ip = "127.0.0.1";
+    char xplane_ip_buf[32] {};   // stores IP slice when frame_str has host:port
     uint16_t xplane_port = 49000;
     uint16_t bind_port = 49001;
     // udp socket, input and output
-    SocketAPM_native socket_in{true};
-    SocketAPM_native socket_out{true};
+    SocketAPM socket_in{true};
+    SocketAPM socket_out{true};
 
     uint64_t time_base_us;
     uint32_t last_data_time_ms;
@@ -76,6 +77,7 @@ private:
     bool connected = false;
     uint32_t xplane_frame_time;
     uint64_t seen_mask;
+    uint32_t last_dref_ms;
 
     struct {
         uint32_t last_report_ms;
@@ -96,10 +98,16 @@ private:
         uint8_t channel;
         float range;
         float fixed_value;
+        bool  invert;       // negate ANGLE/RANGE value before sending
+                            // (e.g. paired aileron from a single channel)
     };
 
     // list of DRefs;
     struct DRef *drefs;
+    // round-robin cursor: send_drefs() walks the list one DRef per call
+    // on PPP so the link's TX queue doesn't overflow. nullptr means "start
+    // over from the head".
+    struct DRef *next_dref_to_send;
     uint32_t dref_debug;
 
     enum class JoyType {

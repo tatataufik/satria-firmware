@@ -1,0 +1,24 @@
+# XPlane DREF map — flying-wing elevon aircraft, direct surface control
+# assumes: CH1=left elevon, CH2=right elevon, CH3=throttle
+#
+# ArduPlane outputs pre-mixed elevon PWM on CH1/CH2 (SERVO_FUNCTION 77/78).
+# Direct surface mapping — no joystick override or demix needed.
+# override_control_surfaces prevents X-Plane recomputing surfaces from yoke.
+#
+#   CH1 (left elevon)  → wing1l_ail1def
+#   CH2 (right elevon) → wing1r_ail1def (inverted — opposite deflection for aileron)
+
+{
+    "settings" : { "debug" : 0 },
+
+    "sim/operation/override/override_throttles"       : { "type" : "fixed", "value" : 1 },
+    "sim/operation/override/override_control_surfaces": { "type" : "fixed", "value" : 1 },
+    "sim/flightmodel/misc/jato_left"                  : { "type" : "fixed", "value" : 1.0 },
+
+    # Elevon surfaces — direct angle mapping (ArduPlane elevon mix pre-applied)
+    "sim/flightmodel/controls/wing1l_ail1def" : { "type" : "angle", "range" : 20.0, "channel" : 1 },
+    "sim/flightmodel/controls/wing1r_ail1def" : { "type" : "angle", "range" : 20.0, "channel" : 2, "invert" : true },
+
+    # forward throttle on CH3
+    "sim/flightmodel/engine/ENGN_thro_use[0]" : { "type" : "range", "range" : 1, "channel" : 3 }
+}

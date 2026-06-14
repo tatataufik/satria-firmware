@@ -1,0 +1,283 @@
+# ArduCopter default params for X-Plane SITL (xplane_quad.json, X-frame)
+
+# --- Frame ---
+FRAME_CLASS         1       # Quad
+FRAME_TYPE          1       # X
+
+# --- Motor SERVO function mapping ---
+# After EEPROM wipe, SERVO functions reset to 0 (disabled). Without these,
+# FRAME_CLASS alone isn't enough — ArduCopter can't actually output to motors.
+# Function values: 33=Motor1, 34=Motor2, 35=Motor3, 36=Motor4.
+SERVO1_FUNCTION     33
+SERVO2_FUNCTION     34
+SERVO3_FUNCTION     35
+SERVO4_FUNCTION     36
+
+# --- AHRS: use EKF3 (Kalman) instead of SITL passthrough ---
+# Switched from AHRS_EKF_TYPE=10 (SITL backend, zero EKF lag) to 3 (EKF3).
+# Passthrough gave a clean attitude but the rate controller still read raw
+# gyro through AP_AHRS::get_gyro_latest() — meaning every X-Plane physics
+# transient (and any post-cal gyro drift) hit the rate PID unfiltered. EKF3
+# returns bias-corrected, innovation-gated gyro to the same call, which is
+# the same property that makes PX4 stable on X-Plane sensor data.
+AHRS_EKF_TYPE       3
+EK3_ENABLE          1
+EK2_ENABLE          0
+
+# --- EKF3 tolerances tuned for X-Plane SITL ---
+# X-Plane delivers ~80 Hz RREF gyro/accel + ~30 Hz GPS. Default EKF3 noise
+# values assume real MEMS at 400 Hz and a real GPS; loosen the input noise
+# and let bias states track faster so convergence happens in seconds, not
+# the minute-plus you'd see with hardware defaults.
+EK3_GYRO_P_NSE      0.03      # default 0.015 — accept the bridge IIR's residual noise
+EK3_ACC_P_NSE       0.50      # default 0.35
+EK3_ABIAS_P_NSE     0.005     # default 0.003 — faster accel-bias tracking
+EK3_GBIAS_P_NSE     1.0e-4    # default 1.0e-5 — faster gyro-bias tracking
+EK3_VELNE_M_NSE     0.5       # GPS NE velocity is clean in SITL
+EK3_VELD_M_NSE      0.7
+EK3_POSNE_M_NSE     1.0
+EK3_ALT_M_NSE       1.0
+EK3_YAW_M_NSE       0.3       # mag heading noise
+EK3_MAG_CAL         3         # copter default: heading on ground, 3-axis after first climb
+EK3_CHECK_SCALE     100       # disable nav check; SITL GPS is perfect
+EK3_GPS_CHECK       0         # skip GPS sanity-check on init
+EK3_FLOW_USE        0         # no optical flow in this setup
+
+# --- Sensors: SITL backends ---
+GPS1_TYPE           100
+
+# --- Compass: one SITL instance ---
+# SITL ships with SIM_MAG{1..6}_DEVID non-zero by default → 6 compass
+# instances are created. EKF3's tryChangeCompass() then cycles through them
+# whenever the mag innovation gate fires ("EKF3 IMU0 switching to compass N"
+# spam). Zero out all secondaries so compass.get_count() == 1 and the
+# switching code is short-circuited entirely.
+COMPASS_USE         1
+COMPASS_USE2        0
+COMPASS_USE3        0
+SIM_MAG2_DEVID      0
+SIM_MAG3_DEVID      0
+SIM_MAG4_DEVID      0
+SIM_MAG5_DEVID      0
+SIM_MAG6_DEVID      0
+
+# --- Safety / arming ---
+BRD_SAFETY_DEFLT    0
+# ARMING_CHECK was renamed to ARMING_SKIPCHK in 4.7 with INVERTED semantics:
+#   ARMING_CHECK = 0   meant "skip all"   (old)
+#   ARMING_SKIPCHK = -1 means "skip all"  (new, all bits set)
+# On a fresh EEPROM, the old name is silently ignored. Use the new name.
+# Also explicitly disable the WMM mag-field XY/Z arming check
+# (ARMING_MAGTHRESH=0). With AHRS_EKF_TYPE=3 (EKF3) running, that check
+# compares compass_field rotated by EKF3's body-to-NED estimate against the
+# WMM expected field; before EKF3's yaw converges (~5 s) the rotation is
+# off and the check fires with "xy diff:>100".
+ARMING_SKIPCHK      -1
+ARMING_MAGTHRESH    0
+ARMING_REQUIRE      1
+
+# --- Sensor calibration policy ---
+# Don't set per-sensor IDs/offsets here. ArduCopter's SITL driver assigns
+# its own device IDs at boot — hard-coding them in this file causes a
+# mismatch ("cal saved for sensor X, current sensor is Y") which makes
+# cal-required errors appear ON TOP of what we're trying to suppress.
+#
+# Instead, rely on ARMING_CHECK=0 (above) to bypass all checks, plus the
+# compass settings below to keep it simple. If you ever want to re-enable
+# checks, run `accelcalsimple` and `calibrate gyros` in MAVProxy.
+
+# AHRS level trim — small values mark the "place vehicle level" step
+# of accel cal as completed. These don't reference a specific sensor ID
+# so they're safe to set here.
+AHRS_TRIM_X         0.001
+AHRS_TRIM_Y         0.001
+
+# Compass — disable secondary compasses, leave primary at default behavior.
+COMPASS_USE         1
+COMPASS_LEARN       0          # disable in-flight learning
+COMPASS_AUTODEC     1          # auto-set declination from GPS
+COMPASS_OFFS_MAX    850        # widen offset acceptance for SITL noise
+
+# Disable compasses 2 and 3 entirely (single-compass SITL setup)
+COMPASS_USE2        0
+COMPASS_USE3        0
+SIM_MAG2_DEVID      0
+SIM_MAG3_DEVID      0
+
+# --- RC ---
+THR_FAILSAFE        0
+RC_OVERRIDE_TIME    -1
+
+# --- RC deadzones widened for SITL joystick neutral-position offsets ---
+# QGC's joystick / SITL's RC source rarely centers exactly at 1500. Observed
+# neutral values: R=1483, P=1515, T=1470, Y=1479 (15-30µs off-center).
+# Default deadzones (20-30µs) are too tight — vehicle treats joystick rest
+# position as "pilot input" → triggers override in GUIDED/LOITER/AUTO/LAND
+# and disables autonomy. 60µs comfortably covers typical joystick drift.
+RC1_DZ              60
+RC2_DZ              60
+RC3_DZ              60
+RC4_DZ              60
+
+# --- Gyro boot-time calibration ---
+# INS_GYR_CAL = 1 → auto-calibrate gyros at boot. Was 0 (never calibrate),
+# which made ArduCopter report "gyros not calibrated" even with offsets set.
+# SITL needs auto-cal at boot to mark gyros as cal-done.
+INS_GYR_CAL         1
+# Note: INS_ACCOFFS / INS_ACCSCAL already defined above (lines ~40), don't duplicate.
+
+# --- Scheduler ---
+# SCHED_LOOP_RATE=200 → gyro-rate prearm threshold is 1.8*200 = 360Hz
+# ([AP_InertialSensor.cpp pre_arm_check_gyro_backend_rate_hz]). The SITL IMU
+# backend resamples at ~550Hz, so 360Hz clears with margin; at the AC default
+# 400Hz loop the threshold is 720Hz and prearm fails
+# "Gyro 0 rate ~550Hz < loop rate*1.8 720Hz". 200Hz keeps more control
+# bandwidth than 100 while still passing. Requires a reboot (and EEPROM wipe).
+SCHED_LOOP_RATE     200
+
+# --- INS: single IMU ---
+# SITL creates 3 IMUs; all read the same X-Plane FDM accel/gyro plus independent
+# noise, and X-Plane's jittery stream makes them momentarily disagree. The
+# arming consistency check (accels_consistent / gyros_consistent) needs them to
+# agree continuously for 10s (AP_ARMING_IMU_CONSISTENCY_CHECK_TIME_MS); any
+# breach resets the timer → "Accels inconsistent" / "Gyros inconsistent".
+# Enabling only IMU0 makes get_accel_count()==1, so the consistency check
+# returns true immediately and the whole family of failures disappears — without
+# relying on ARMING_SKIPCHK to blanket-disable every prearm check.
+INS_ENABLE_MASK     1
+
+# --- INS filters ---
+INS_GYRO_FILTER     20
+INS_ACCEL_FILTER    20
+
+# --- Motor settings ---
+# MOT_THST_HOVER bumped 0.35 → 0.65 after live diagnostic showed the X-Plane
+# quad model averages ~69% PWM during attempted hover. Default 0.35 caused
+# sticks-centered to produce throttle that couldn't sustain flight → vehicle
+# fell from altitude → wild attitude from saturated motor mixer.
+# MOT_HOVER_LEARN=2 lets the controller refine and save the value during flight.
+MOT_PWM_TYPE        0
+MOT_PWM_MIN         1000
+MOT_PWM_MAX         2000
+MOT_SPIN_ARM        0.10
+MOT_SPIN_MIN        0.15
+MOT_THST_EXPO       0.65
+MOT_THST_HOVER      0.65
+MOT_HOVER_LEARN     2
+MOT_SPOOL_TIME      0.5     # smooth spool-up matching PX4 MPC_SPOOLUP_TIME
+                            # (AC default is 0.5 s; explicit for clarity)
+
+# --- Angle controller ---
+ATC_ANG_RLL_P       4.5
+ATC_ANG_PIT_P       4.5
+ATC_ANG_YAW_P       4.5
+
+# --- STABILIZE-mode feel: PX4 STABILIZED parity ---
+# Shape stick → setpoint response so AC's STABILIZE behaves like PX4's
+# STABILIZED. Default AC values are usable but feel snappier than PX4.
+ATC_INPUT_TC        0.15      # time-constant for stick→attitude smoothing
+                              # (PX4 has similar shaping via MPC_MAN_TILT_TAU)
+ACRO_Y_RATE         40        # max yaw rate from stick (deg/s); matches
+                              # PX4 default MPC_MAN_Y_MAX = 40 deg/s
+
+# --- Roll rate PID ---
+# D was 0 because raw gyro through AHRS_EKF_TYPE=10 (passthrough) carried
+# X-Plane round-trip jitter and a differentiated signal blew up. Switching
+# to EKF3 (AHRS_EKF_TYPE=3 above) feeds the rate loop a Kalman-smoothed
+# gyro, so a small D becomes useful for damping — paired with a tighter
+# D-term LPF (5 Hz) to kill any residual high-freq content.
+ATC_RAT_RLL_P       0.100
+ATC_RAT_RLL_I       0.050
+ATC_RAT_RLL_D       0.008
+ATC_RAT_RLL_FF      0.000
+ATC_RAT_RLL_FLTD    5.0
+ATC_RAT_RLL_IMAX    0.5
+
+# --- Pitch rate PID ---
+# Roll/Pitch D raised 2026-05-28 from 0.002 → 0.008 (4×) following the same
+# pattern that fixed yaw: under clean sensors the rate loop has full authority
+# and the previously-minimal D leaves it underdamped. Live MAVLink test after
+# the yaw-D fix saw roll/pitch swing -16°→+31°→+34°→-62° in ~1 s while climbing
+# straight up in GUIDED — classic underdamped oscillation, same shape yaw had.
+ATC_RAT_PIT_P       0.100
+ATC_RAT_PIT_I       0.050
+ATC_RAT_PIT_D       0.008
+ATC_RAT_PIT_FF      0.000
+ATC_RAT_PIT_FLTD    5.0
+ATC_RAT_PIT_IMAX    0.5
+
+# --- Yaw rate PID ---
+# 2026-05-28: A live MAVLink GUIDED takeoff observed violent yaw oscillation
+# the instant gear friction released — yaw rate ran -400°/s → +342°/s in 0.5 s
+# and flipped the aircraft. EEPROM at the time was already P=0.18, D=0; the
+# previous file value of P=0.8 was stale. So the oscillation is NOT a P-too-high
+# problem — D=0 leaves the yaw loop with no damping. After cleaning up sensors
+# (accel scaling + RREF state) the controller has full authority over the
+# X-Plane model and a tiny disturbance becomes oscillation without damping.
+# Adding D=0.003 to introduce damping; if it still oscillates, raise D first
+# (try 0.006/0.010) before touching P.
+ATC_RAT_YAW_P       0.200
+ATC_RAT_YAW_I       0.020
+ATC_RAT_YAW_D       0.008
+ATC_RAT_YAW_IMAX    0.5
+
+
+# =============================================================================
+# Aligned with PX4 xplane-sitl tuning (2026-05-24).
+# ArduCopter uses centimeters/centidegrees where PX4 uses meters/degrees.
+# =============================================================================
+
+# --- Speed / waypoint behavior ---
+# ArduCopter doesn't tolerate the same aggressive values as PX4 in SITL with
+# the X-Plane quad model — the rate loop tuning (ATC_RAT_RLL_P=0.10 above) is
+# conservative for X-Plane sensor lag, so navigation has to match.
+# 2026-05-24: pulled back from PX4-direct-copy values that crashed on takeoff.
+WPNAV_SPEED         1500      # cm/s — 15 m/s cruise (down from 2200 that crashed)
+WPNAV_SPEED_UP      300       # cm/s — 3 m/s ascent (was 1000, way too aggressive)
+WPNAV_SPEED_DN      150       # cm/s — 1.5 m/s descent
+WPNAV_ACCEL         500       # cm/s² — 5 m/s² horizontal accel (was 1000)
+WPNAV_ACCEL_Z       200       # cm/s² — gentle vertical accel
+WPNAV_RADIUS        1500      # cm — 15 m WP radius (down from 2500, matches lower speed)
+
+# --- Tilt limit ---
+# 45° gives plenty of horizontal authority while keeping the rate loop within
+# its working envelope. PX4's 55° required more PID headroom than this AC has.
+ANGLE_MAX           4500
+
+# --- Pilot speeds (manual flight) ---
+PILOT_SPEED_UP      300       # cm/s, 3 m/s manual ascent
+PILOT_SPEED_DN      150       # cm/s, 1.5 m/s manual descent
+PILOT_TKOFF_ALT     0         # 0 = use stick to climb; set e.g. 1000 for auto-takeoff to 10m
+
+# --- Landing ---
+# PX4: MPC_LAND_SPEED=0.7 m/s, LNDMC_TRIG_TIME=0.5 s
+LAND_SPEED          70        # cm/s, final descent speed
+LAND_SPEED_HIGH     250       # cm/s, descent rate above LAND_ALT_LOW (2.5 m/s)
+LAND_REPOSITION     0         # disable RC repositioning during land (cleaner SITL behavior)
+
+# --- Position controller ---
+# PX4 has MPC_XY_P=0.05 (very soft) in the upstream xplane-sitl baseline.
+# AC's PSC_POSXY_P default is 1.0; lower to soften horizontal pull.
+PSC_POSXY_P         1.0       # leave at default; match PX4 by reducing if needed
+PSC_VELXY_P         2.0       # default
+PSC_VELXY_I         1.0       # default
+PSC_VELXY_D         0.5       # default
+PSC_POSZ_P          1.0       # vertical position P
+PSC_VELZ_P          5.0       # vertical velocity P
+
+# --- Loiter / hold ---
+LOIT_SPEED          1500      # cm/s, matches mission cruise
+LOIT_ACC_MAX        500       # cm/s² (matches WPNAV_ACCEL)
+
+# --- Mission yaw behavior ---
+# PX4 MIS_YAW_ERR=30° — ArduCopter uses WP_YAW_BEHAVIOR for yaw policy.
+# 1 = face next WP (matches PX4 default behavior).
+WP_YAW_BEHAVIOR     1
+
+# --- Auto-disarm grace period ---
+# Default 10 s is too tight for "arm in STABILIZE → switch to AUTO" workflow:
+# the few-second delay between arming and takeoff command can hit the auto-
+# disarm timeout, leaving vehicle disarmed in AUTO mode and showing
+# "not armable" (because AUTO mode itself rejects arm commands).
+# 60 s gives plenty of time to switch modes and start the mission.
+DISARM_DELAY        60

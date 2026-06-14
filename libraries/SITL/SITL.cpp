@@ -637,8 +637,15 @@ const AP_Param::GroupInfo SIM::var_info3[] = {
 #ifdef SFML_JOYSTICK
     AP_SUBGROUPEXTENSION("",      63, SIM,  var_sfml_joystick),
 #endif // SFML_JOYSTICK
-    //
-    // 57 was SONAR_OFFSET
+
+#if AP_SIM_XPLANE_ENABLED
+    // @Param: XP_BIND_PORT
+    // @DisplayName: XPlane bind port
+    // @Description: UDP port ArduPilot listens on for data from X-Plane. 0 uses the compiled-in default (49001). Overrides the port parsed from the sim_vehicle.py --model xplane*:HOST:PORT argument.
+    // @Range: 1 65535
+    // @User: Advanced
+    AP_GROUPINFO("XP_BIND_PORT", 57, SIM, xplane_bind_port, 0),   // reuses slot 57 (formerly SONAR_OFFSET)
+#endif
 
     AP_GROUPEND
 };

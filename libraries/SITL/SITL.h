@@ -625,6 +625,13 @@ public:
     // clamp simulation - servo channel starting at offset 1 (usually ailerons)
     AP_Int8 clamp_ch;
 
+#if AP_SIM_XPLANE_ENABLED
+    // UDP port the X-Plane SITL backend listens on for X-Plane DATA@/RREF
+    // packets. 0 = use compiled-in default (49001) or the port parsed from
+    // sim_vehicle.py --model xplane*:HOST:PORT. Non-zero overrides both.
+    AP_Int32 xplane_bind_port;
+#endif
+
 #if AP_SIM_INS_FILE_ENABLED
     enum INSFileMode {
         INS_FILE_NONE = 0,

@@ -1,0 +1,103 @@
+# hwdef for fmuv3-hil
+# fmuv3 (Pixhawk1) SITL-on-hardware with X-Plane as the physics backend.
+#
+# Architecture:
+#   - AP_SIM_FRAME_CLASS=XPlane: SITL XPlane backend runs on the MCU.
+#   - PPP over TELEM2 (SERIAL2) gives the Pixhawk an IP to reach X-Plane.
+#     PC: sudo pppd /dev/tty.usbserial-XXXX 115200 10.0.0.1:10.0.0.2 noauth local nodetach asyncmap 0 novj nopcomp noaccomp lcp-echo-interval 0
+#   - SITL sends aileron/elevator/throttle/rudder DREFs to X-Plane, receives DATA@ physics back.
+#   - SIMState (GPS/IMU/Baro/Compass backends) reads from X-Plane data.
+#   - Safety switch disabled; servos output immediately on boot.
+#
+# Build:
+#   ./waf configure --board fmuv3-hil
+#   ./waf plane
+#
+# X-Plane setup:
+#   Settings → Net Connections → Data: send DATA@ to 10.0.0.2:49005
+#   Rows: 1 (times), 3 (speed), 4 (Gload), 13 (trim), 16 (ang vel),
+#         17 (pitch/roll/hdg), 20 (lat/lon/alt), 21 (local vel),
+#         37 (engine RPM), 38 (prop RPM), 39 (prop pitch)
+#
+# Default parameters (embedded via defaults.parm):
+#   GPS1_TYPE        100   SITL GPS (reads SIMState populated by X-Plane)
+#   COMPASS_USE      1     SITL compass (reads SIMState)
+#   ARSPD_TYPE       100   SITL airspeed
+#   NET_ENABLE       1     PPP networking enabled
+#   SERIAL2_PROTOCOL 48    PPP on TELEM2
+#   NET_IPADDR0-3         10.0.0.2
+
+include ../fmuv3/hwdef.dat
+
+# ── SITL framework ────────────────────────────────────────────────────────────
+# SIM_ENABLED activates SITL sensor backends (INS, Baro, Compass) so they
+# read from sitl->state, which SIM_XPlane populates from X-Plane DATA@.
+env SIM_ENABLED 1
+
+# X-Plane frame: SITL XPlane backend runs on MCU, connects to X-Plane via UDP
+# over the PPP link (10.0.0.1 = PC pppd address).
+define AP_SIM_FRAME_CLASS XPlane
+define AP_SIM_FRAME_STRING "xplane:10.0.0.1"
+
+# JSON DREF map embedded in ROMFS for standard 4-channel fixed-wing
+define XPLANE_JSON "@ROMFS/xplane_plane.json"
+
+# Disable file-replay INS backend (not needed for live simulation)
+define AP_SIM_INS_FILE_ENABLED 0
+
+# ── hardware overrides ────────────────────────────────────────────────────────
+
+# No separate bootloader for this SITL variant — skip the bootloader-image
+# dependency. The board still uses the standard fmuv3 bootloader for flashing.
+define AP_BOOTLOADER_FLASHING_ENABLED 0
+
+# Disable safety switch — outputs active immediately without pressing button
+undef HAL_HAVE_SAFETY_SWITCH
+define HAL_HAVE_SAFETY_SWITCH 0
+
+# Disable SD-card file logging — not needed for bench simulation
+define HAL_LOGGING_FILESYSTEM_ENABLED 0
+define AP_MAVLINK_FTP_ENABLED 0
+
+# ── Memory optimisations for STM32F427 (256 KB RAM) ─────────────────────────
+# EKF3 alone requires >60 KB heap for 2 cores — too large for fmuv3.
+# Disable at compile time so it is never instantiated; use EKF2 instead.
+define HAL_NAVEKF3_AVAILABLE 0
+
+# Disable EKF3 optional features (bloat flash/RAM even when EKF3 is off)
+define EK3_FEATURE_BODY_ODOM 0
+define EK3_FEATURE_EXTERNAL_NAV 0
+define EK3_FEATURE_DRAG_FUSION 0
+
+# Reduce compass sensor slots (SITL uses one synthetic compass)
+define HAL_COMPASS_MAX_SENSORS 1
+
+# Disable peripherals not needed for bench simulation
+define HAL_ADSB_ENABLED 0
+define HAL_MOUNT_ENABLED 0
+define HAL_PROXIMITY_ENABLED 0
+define HAL_VISUALODOM_ENABLED 0
+define HAL_GENERATOR_ENABLED 0
+define HAL_CRSF_TELEM_ENABLED 0
+define HAL_HOTT_TELEM_ENABLED 0
+define HAL_SUPPORT_RCOUT_SERIAL 0
+define AP_LANDINGGEAR_ENABLED 0
+
+# ── Networking: PPP over TELEM2 ───────────────────────────────────────────────
+# PPP creates a TCP/IP link over SERIAL2 so the SITL XPlane backend can
+# send/receive UDP packets to/from X-Plane running on the connected PC.
+# AP_Networking_Config.h includes AP_NETWORKING_BACKEND_PPP in
+# AP_NETWORKING_CONTROLS_HOST_IP_SETTINGS_ENABLED so NET_IPADDR0-3 params
+# exist; restart_instance() calls ppp_set_ipcp_ouraddr(10.0.0.2) before
+# ppp_connect() so ArduPilot proposes its IP in IPCP Configure-Request.
+HAL_USE_PPP TRUE
+define AP_NETWORKING_BACKEND_PPP 1
+define TCPIP_THREAD_STACKSIZE 8192
+define AP_NETWORKING_PORT_STACK_SIZE 4096
+# Buffer sizes tuned for 115200 baud (≈11.5 KB/s).
+# 2048/1024 avoids STM32F427 heap exhaustion and the "No buffer space" error.
+define PPP_BUFSIZE_TX 2048
+define PPP_BUFSIZE_RX 2048
+
+# ROMFS: embed the X-Plane DREF map so no SD card is needed
+ROMFS xplane_plane.json Tools/autotest/models/xplane_plane.json

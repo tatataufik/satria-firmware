@@ -388,7 +388,11 @@
 #endif  // AP_SIM_WEBOTSPYTHON_ENABLED
 
 #ifndef AP_SIM_XPLANE_ENABLED
-#define AP_SIM_XPLANE_ENABLED (CONFIG_HAL_BOARD == HAL_BOARD_SITL)
+// Enable on SITL builds (always) OR on any board where the SITL framework
+// runs with PPP networking — covers the fmuv3-hil-* "SIM-on-hardware"
+// boards that compile SIM_XPlane into the real-MCU firmware.
+#define AP_SIM_XPLANE_ENABLED ((CONFIG_HAL_BOARD == HAL_BOARD_SITL) || \
+    (AP_SIM_ENABLED && AP_NETWORKING_BACKEND_PPP))
 #endif  // AP_SIM_XPLANE_ENABLED
 
 // base class for Siyi simulations:

@@ -1338,6 +1338,9 @@ uint8_t GCS_MAVLINK_Plane::send_available_mode(uint8_t index) const
 #if MODE_AUTOLAND_ENABLED
         &plane.mode_autoland,
 #endif
+        // Custom seeker mode — must be advertised here or QGC can't map
+        // custom_mode 27 and shows "unknown" on a live switch to TRACKING.
+        &plane.mode_tracking,
     };
 
     const uint8_t fw_mode_count = ARRAY_SIZE(fw_modes);

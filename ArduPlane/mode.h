@@ -1087,7 +1087,7 @@ class ModeTracking : public Mode
 public:
 
     Number mode_number() const override { return Number::TRACKING; }
-    const char *name()   const override { return "TRACKING"; }
+    const char *name()   const override { return "Tracking"; }
     const char *name4()  const override { return "TRAK"; }
 
     void update() override;

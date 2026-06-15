@@ -1398,8 +1398,15 @@ uint8_t GCS_MAVLINK_Plane::send_available_mode(uint8_t index) const
 #endif
     }
 
-    // All modes can be selected except Initialising and those disabled by FLTMODE_GCSBLOCK param
-    const bool user_selectable = (mode_number != Mode::Number::INITIALISING) && plane.gcs_mode_enabled(mode_number);
+    // All modes can be selected except Initialising, the seeker-only TRACKING
+    // mode, and those disabled by FLTMODE_GCSBLOCK. TRACKING is still advertised
+    // (so QGC maps custom_mode 27 → "Tracking" when active) but flagged
+    // NOT_USER_SELECTABLE so it is hidden from the GCS flight-mode selector.
+    // This is a GCS-UI hint only — it does NOT block mode entry, so the seeker
+    // can still command TRACKING over MAVLink (unlike FLTMODE_GCSBLOCK).
+    const bool user_selectable = (mode_number != Mode::Number::INITIALISING)
+                              && (mode_number != Mode::Number::TRACKING)
+                              && plane.gcs_mode_enabled(mode_number);
 
     mavlink_msg_available_modes_send(
         chan,

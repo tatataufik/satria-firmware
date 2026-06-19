@@ -1,0 +1,98 @@
+# hwdef for Pixhawk6C-hil-vtail
+# Holybro Pixhawk 6C (STM32H743) SITL-on-hardware with X-Plane as the physics
+# backend.  V-tail layout: CH1=aileron, CH2=vtail_right, CH3=throttle,
+# CH4=vtail_left.  ArduPlane mixes elevator+rudder → vtail surfaces;
+# xplane_vtail.json maps CH2/CH4 directly to the X-Plane vstab surface datarefs.
+#
+# This is the Pixhawk6C analogue of fmuv3-hil-vtail.  The only board-specific
+# difference is the UART map: on the 6C, SERIAL_ORDER is
+#   OTG1 UART7 UART5 USART1 UART8 USART2 USART3 OTG2
+# so SERIAL2 (TELEM2) = UART5 — PPP runs there, same SERIAL2 index as fmuv3.
+# Being an STM32H743 (1 MB RAM, 2 MB flash) the 6C does NOT need the
+# STM32F427 memory cuts that fmuv3-hil-vtail applies (EKF3, compass slots,
+# peripheral trims), so they are omitted here.
+#
+# Architecture:
+#   - AP_SIM_FRAME_CLASS=XPlane: SITL XPlane backend runs on the MCU.
+#   - PPP over TELEM2 (SERIAL2 = UART5) gives the Pixhawk an IP to reach X-Plane.
+#     PC: sudo pppd /dev/ttyUSB0 115200 10.0.0.1:10.0.0.2 noauth local nodetach asyncmap 0 novj nopcomp noaccomp lcp-echo-interval 0
+#   - SITL sends vtail/throttle DREFs to X-Plane, receives DATA@ physics back.
+#   - SIMState (GPS/IMU/Baro/Compass backends) reads from X-Plane data.
+#   - Safety switch disabled; servos output immediately on boot.
+#
+# V-tail mixing (ArduPlane channel_function_mixer, MIXING_GAIN=1.0):
+#   CH2 (vtail_right) = (elevator - rudder) * 1.0
+#   CH4 (vtail_left)  = (elevator + rudder) * 1.0
+# xplane_vtail.json maps CH2/CH4 directly to vstab surface datarefs —
+# no demix needed; override_control_surfaces prevents X-Plane recomputing surfaces.
+#
+# Build:
+#   ./waf configure --board Pixhawk6C-hil-vtail
+#   ./waf plane
+#
+# X-Plane setup:
+#   Settings → Net Connections → Data: send DATA@ to 10.0.0.2:49005
+#   Rows: 1 (times), 3 (speed), 4 (Gload), 13 (trim), 16 (ang vel),
+#         17 (pitch/roll/hdg), 20 (lat/lon/alt), 21 (local vel),
+#         37 (engine RPM), 38 (prop RPM), 39 (prop pitch), 136 (joystick raw)
+#   X-Plane aircraft model must be configured with V-tail in Plane Maker.
+
+include ../Pixhawk6C/hwdef.dat
+
+# ── SITL framework ────────────────────────────────────────────────────────────
+# SIM_ENABLED activates SITL sensor backends (INS, Baro, Compass) so they read
+# from sitl->state, which SIM_XPlane populates from X-Plane DATA@.
+env SIM_ENABLED 1
+
+# X-Plane frame: SITL XPlane backend runs on MCU, connects to X-Plane via UDP
+# over the PPP link (10.0.0.1 = PC pppd address).
+define AP_SIM_FRAME_CLASS XPlane
+define AP_SIM_FRAME_STRING "xplane:10.0.0.1"
+
+# JSON DREF map embedded in ROMFS for V-tail airframe
+define XPLANE_JSON "@ROMFS/xplane_vtail.json"
+
+# Disable file-replay INS backend (not needed for live simulation)
+define AP_SIM_INS_FILE_ENABLED 0
+
+# ── INS: match the validated fmuv3-hil config ────────────────────────────────
+# The Pixhawk6C base hwdef enables fast IMU sampling (HAL_DEFAULT_INS_FAST_SAMPLE
+# 3) plus a real-IMU probe list. With SIM_ENABLED the real IMUs are bypassed —
+# AP_InertialSensor::detect_backends() adds the SITL IMUs and returns before the
+# probe list — but the fast-sample *default* still applies to the SITL gyro
+# instances (AP_InertialSensor_SITL::generate_gyro() does 8x sub-sampling when
+# the instance is in INS_FAST_SAMPLE). The fmuv3-hil family leaves this 0; force
+# it to 0 here so the SITL INS path is identical to the proven HIL config.
+undef HAL_DEFAULT_INS_FAST_SAMPLE
+define HAL_DEFAULT_INS_FAST_SAMPLE 0
+# (The base board's real-IMU HAL_INS_PROBE_LIST stays defined but is dead code:
+# detect_backends() adds the SITL IMUs and returns before reaching it.)
+
+# ── hardware overrides ────────────────────────────────────────────────────────
+# No separate bootloader build for this SITL variant — the board still uses the
+# standard Pixhawk6C bootloader for flashing.
+define AP_BOOTLOADER_FLASHING_ENABLED 0
+
+# Disable safety switch — outputs active immediately without pressing button
+undef HAL_HAVE_SAFETY_SWITCH
+define HAL_HAVE_SAFETY_SWITCH 0
+
+# Disable SD-card file logging — not needed for bench simulation
+define HAL_LOGGING_FILESYSTEM_ENABLED 0
+define AP_MAVLINK_FTP_ENABLED 0
+
+# ── Networking: PPP over TELEM2 (SERIAL2 = UART5) ─────────────────────────────
+# PPP creates a TCP/IP link over SERIAL2 so the SITL XPlane backend can
+# send/receive UDP packets to/from X-Plane running on the connected PC.
+# restart_instance() calls ppp_set_ipcp_ouraddr(10.0.0.2) before ppp_connect()
+# so ArduPilot proposes its IP in the IPCP Configure-Request.
+HAL_USE_PPP TRUE
+define AP_NETWORKING_BACKEND_PPP 1
+define TCPIP_THREAD_STACKSIZE 8192
+define AP_NETWORKING_PORT_STACK_SIZE 4096
+# Buffer sizes tuned for 115200 baud (≈11.5 KB/s).
+define PPP_BUFSIZE_TX 2048
+define PPP_BUFSIZE_RX 2048
+
+# ROMFS: embed the X-Plane DREF map so no SD card is needed
+ROMFS xplane_vtail.json Tools/autotest/models/xplane_vtail.json

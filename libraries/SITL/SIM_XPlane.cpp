@@ -26,6 +26,8 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdlib.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -33,6 +35,7 @@
 #include <AP_Filesystem/AP_Filesystem.h>
 #include <SRV_Channel/SRV_Channel.h>
 #include <AP_Vehicle/AP_Vehicle_Type.h>
+#include <GCS_MAVLink/GCS.h>
 
 // ignore cast errors in this case to keep complexity down
 #pragma GCC diagnostic ignored "-Wcast-align"
@@ -103,6 +106,47 @@ static const uint8_t required_data[] {
         JoystickRaw };
 
 using namespace SITL;
+
+// UTC midnight (seconds since 1970-01-01) of the firmware build date. __DATE__ is
+// "Mmm dd yyyy". X-Plane carries no year, so year/month/day come from the build and
+// only the time-of-day comes from X-Plane's zulu clock; the HIL firmware is rebuilt
+// often, so the build date tracks the flight date closely.
+static time_t build_date_midnight_utc(void)
+{
+    const char *d = __DATE__;                 // e.g. "Jul 13 2026"
+    static const char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    int mon = 0;
+    for (int i=0; i<12; i++) {
+        if (d[0]==months[i*3] && d[1]==months[i*3+1] && d[2]==months[i*3+2]) { mon = i; break; }
+    }
+    const int day  = atoi(d+4);               // space-padded day is fine for atoi
+    const int year = atoi(d+7);
+    auto is_leap = [](int y){ return (y%4==0 && y%100!=0) || y%400==0; };
+    int64_t days = 0;
+    for (int y=1970; y<year; y++) days += is_leap(y) ? 366 : 365;
+    static const int mdays[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    for (int mo=0; mo<mon; mo++) days += mdays[mo] + ((mo==1 && is_leap(year)) ? 1 : 0);
+    days += day - 1;
+    return (time_t)(days * 86400LL);
+}
+
+// Seed SITL start_time_UTC = (build-date 00:00 UTC) + X-Plane zulu time-of-day −
+// uptime, i.e. the UTC at boot. Without this, start_time_UTC stays 0 on HIL
+// hardware and the simulated GPS week/time underflows. Called once when the first
+// zulu arrives and again on every home reset, so the clock follows X-Plane (set to
+// real UTC). SIM_GPS::simulation_timeval re-reads start_time_UTC so it takes effect.
+void XPlane::seed_start_time_utc(void)
+{
+    if (xplane_zulu_sec < 0) {
+        return;
+    }
+    AP::sitl()->start_time_UTC = build_date_midnight_utc()
+        + (time_t)xplane_zulu_sec
+        - (time_t)(AP_HAL::micros64() / 1000000ULL);
+    time_synced = true;
+    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "GPS UTC seeded start=%ld zulu=%.0f",
+                  (long)AP::sitl()->start_time_UTC, (double)xplane_zulu_sec);
+}
 
 XPlane::XPlane(const char *frame_str) :
     Aircraft(frame_str)
@@ -478,6 +522,31 @@ bool XPlane::receive_data(void)
 
         switch (code) {
         case Times: {
+            // X-Plane row 1 field 5 (data[6]) = zulu time-of-day, decimal hours.
+            // (field 6/data[7] is local = zulu + tz offset; field 4/data[5] is a
+            // -999 "disabled" sentinel — do NOT use it.) Some builds emit seconds
+            // (0..86400) instead of hours — normalise to seconds either way;
+            // -999/negative means "not provided", leave zulu unset.
+            {
+                const float z = data[6];
+                xplane_zulu_sec = (z >= 0 && z <= 24.0f) ? z * 3600.0f : z;
+                if (dref_debug) {
+                    printf("XP Times f4=%.1f f5(zulu)=%.4f f6(locl)=%.4f -> %.0fs\n",
+                           data[5], data[6], data[7], (double)xplane_zulu_sec);
+                }
+                // TEMP runtime probe over MAVLink: shows exactly which fields the
+                // running firmware reads until the clock is synced, then goes quiet.
+                static uint32_t last_dbg_ms;
+                const uint32_t now_ms = AP_HAL::millis();
+                if (!time_synced && now_ms - last_dbg_ms > 2000) {
+                    last_dbg_ms = now_ms;
+                    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "XPz f4=%.0f f5=%.3f f6=%.3f zs=%.0f",
+                                  data[5], data[6], data[7], (double)xplane_zulu_sec);
+                }
+                if (!time_synced) {
+                    seed_start_time_utc();   // one-time sync at first zulu (startup)
+                }
+            }
             uint64_t tus = data[3] * 1.0e6f;
             if (tus + time_base_us <= time_now_us) {
                 uint64_t tdiff = time_now_us - (tus + time_base_us);
@@ -627,6 +696,27 @@ bool XPlane::receive_data(void)
         position.z = 0;
         update_position();
         time_advance();
+        // A jump this large is a reposition ("teleport"), not float drift.
+        // Open a settle window so the transient below is suppressed.
+        teleport_settle_ms = now + 500;
+        // Re-seed the SITL UTC clock from X-Plane zulu + build date at every home
+        // reset (see seed_start_time_utc). Fixes the simulated-GPS time underflow.
+        seed_start_time_utc();
+    }
+
+    // While repositioning, X-Plane emits an enormous G-load (row 4) and
+    // angular-rate (row 16) spike. EKF3 integrates that impulse into a corrupted
+    // attitude -- typically roll ~180deg. Parked afterwards the aircraft has zero
+    // GPS velocity, so roll/pitch are unobservable (EKF3 corrects them through
+    // velocity fusion) and the filter can never recover; the only way out was a
+    // reboot. Feed a clean, level, stationary frame for the settle window instead.
+    // The EKF then sees only a position jump, which EK3_GLITCH_RAD / EK3_POS_I_GATE
+    // already tolerate.
+    if (now < teleport_settle_ms) {
+        gyro.zero();
+        velocity_ef.zero();
+        accel_body = dcm.transposed() * Vector3f(0, 0, -GRAVITY_MSS);
+        accel_earth.zero();
     }
 
     update_mag_field_bf();

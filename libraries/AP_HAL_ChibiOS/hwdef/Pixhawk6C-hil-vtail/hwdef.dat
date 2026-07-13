@@ -77,9 +77,15 @@ define AP_BOOTLOADER_FLASHING_ENABLED 0
 undef HAL_HAVE_SAFETY_SWITCH
 define HAL_HAVE_SAFETY_SWITCH 0
 
-# Disable SD-card file logging — not needed for bench simulation
-define HAL_LOGGING_FILESYSTEM_ENABLED 0
-define AP_MAVLINK_FTP_ENABLED 0
+# Enable DataFlash logging to the SD card (the 6C has a slot) + MAVFTP so logs
+# can be downloaded over USB via the GCS. NOTE: with the filesystem backend off
+# and no other backend, ArduPilot's HAL_LOGGING_ENABLED collapses to 0 and EVERY
+# backend (File and MAVLink alike) reports "Unknown logger backend" — i.e. this
+# one line disables logging entirely, not just the File backend. Re-enabling the
+# filesystem backend restores the whole logging subsystem; LOG_BACKEND_TYPE can
+# then select File (1), MAVLink (4), or both (5). See defaults.parm LOG_*.
+define HAL_LOGGING_FILESYSTEM_ENABLED 1
+define AP_MAVLINK_FTP_ENABLED 1
 
 # ── Networking: PPP over TELEM2 (SERIAL2 = UART5) ─────────────────────────────
 # PPP creates a TCP/IP link over SERIAL2 so the SITL XPlane backend can

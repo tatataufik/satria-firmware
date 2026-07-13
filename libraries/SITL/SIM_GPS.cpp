@@ -261,18 +261,12 @@ ssize_t GPS::write_to_autopilot(const char *p, size_t size) const
  */
 void GPS_Backend::simulation_timeval(struct timeval *tv)
 {
-    uint64_t now = AP_HAL::micros64();
-    static uint64_t first_usec;
-    static struct timeval first_tv;
-    if (first_usec == 0) {
-        first_usec = now;
-        first_tv.tv_sec = AP::sitl()->start_time_UTC;
-    }
-    *tv = first_tv;
-    tv->tv_sec += now / 1000000ULL;
-    uint64_t new_usec = tv->tv_usec + (now % 1000000ULL);
-    tv->tv_sec += new_usec / 1000000ULL;
-    tv->tv_usec = new_usec % 1000000ULL;
+    // Re-read start_time_UTC every call (no first_tv cache) so re-seeding it at an
+    // X-Plane home reset (SIM_XPlane::seed_start_time_utc) immediately updates the
+    // simulated GPS time instead of being frozen at the first-fix value.
+    const uint64_t now = AP_HAL::micros64();
+    tv->tv_sec  = AP::sitl()->start_time_UTC + (time_t)(now / 1000000ULL);
+    tv->tv_usec = now % 1000000ULL;
 }
 
 /*

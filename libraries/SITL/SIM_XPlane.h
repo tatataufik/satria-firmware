@@ -74,6 +74,16 @@ private:
     uint32_t last_data_time_ms;
     Vector3d position_zero;
     Vector3f accel_earth;
+    // End of the settle window opened when X-Plane repositions ("teleports") the
+    // aircraft. While inside it we feed a clean, level, stationary IMU frame so
+    // the reposition transient never reaches the EKF. 0 = not settling.
+    uint32_t teleport_settle_ms = 0;
+    // Zulu time-of-day (seconds since 00:00 UTC) from X-Plane row 1; -1 = not yet
+    // received. Seeds SITL start_time_UTC (year/date from build) so the simulated
+    // GPS reports a sane UTC instead of underflowing.
+    float xplane_zulu_sec = -1;
+    bool time_synced = false;
+    void seed_start_time_utc(void);
     bool connected = false;
     uint32_t xplane_frame_time;
     uint64_t seen_mask;

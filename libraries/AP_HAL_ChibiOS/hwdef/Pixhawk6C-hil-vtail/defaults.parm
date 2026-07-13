@@ -31,12 +31,25 @@ COMPASS_USE 1
 # Disable the real onboard compasses so ONLY the SITL compass is used.
 # Unlike the INS (which early-returns to SITL when SIM_ENABLED), the compass
 # detect_backends() adds the SITL compass AND still probes HAL_MAG_PROBE_LIST,
-# so on real H7 hardware the IST8310/RM3100 get added too and read the *bench*
-# magnetic field — giving a wrong heading (and corrupting the EKF attitude).
-# COMPASS_DISBLMSK is a driver-disable bitmask: bit7=IST8310, bit16=RM3100
-#   (1<<7) + (1<<16) = 128 + 65536 = 65664.
+# so on real H7 hardware the bench magnetometers get added too and read the
+# *bench* magnetic field — a wrong heading that corrupts the EKF attitude.
 # fmuv3-hil avoids this only because its bench board has no healthy compass.
-COMPASS_DISBLMSK 65664
+#
+# COMPASS_DISBLMSK is a driver-disable bitmask over AP_Compass DriverType.
+# Do NOT enumerate the specific real drivers: which ones probe depends on what
+# is wired to the board, so any hand-picked list is fragile. Disable every
+# driver EXCEPT DRIVER_SITL (bit 13):
+#   bits 0..22 all set = 2^23 - 1 = 8388607;  minus (1<<13) = 8380415
+#
+# The earlier value 65664 (IST8310 bit7 + RM3100 bit16) was incomplete — on a
+# real Pixhawk 6C a QMC5883L (bit12) still registered as COMPASS_PRIO1_ID and a
+# DroneCAN compass (bit11) as PRIO3, both feeding the EKF the bench field.
+#
+# NOTE: COMPASS_DEV_ID* / COMPASS_PRIO*_ID are sticky — they persist in storage
+# across a reflash. On a board that previously detected real compasses, clear
+# them once (set to 0) and reboot so the SITL compasses re-register.
+# Correct result: COMPASS_DEV_ID{,2,3} == SIM_MAG{1,2,3}_DEVID.
+COMPASS_DISBLMSK 8380415
 
 # SIM_MAG1_OFS: simulated instrument bias for the SITL compass.
 # AP_Compass_SITL mirrors COMPASS_OFS → SIM_MAG1_OFS at runtime when
@@ -68,10 +81,18 @@ RC_OVERRIDE_TIME -1
 # for HIL over the 115200 PPP link.
 SCHED_LOOP_RATE 50
 
-# Logging: disabled — no SD card
-LOG_BITMASK 0
-LOG_BACKEND_TYPE 0
-LOG_DISARM 0
+# Logging: enabled — DataFlash to SD card (the Pixhawk 6C has an SD slot).
+# LOG_BACKEND_TYPE 1 = File. If this HIL board has NO SD card inserted, set it to
+# 4 (MAVLink) instead so logs stream to the GCS over USB — File logging silently
+# writes nothing without a card.
+# LOG_BITMASK 65535 = the standard ArduPlane set (ATT, IMU, GPS, CTUN, NTUN, RCIN/
+# RCOUT, MODE, EKF, …) — plenty for HIL flight analysis.
+# LOG_DISARMED 1 = also log while disarmed, so pre-arm / on-ground HIL behaviour
+# and EKF convergence after a teleport are captured (armed-only would miss them).
+# (The param is LOG_DISARMED, not LOG_DISARM — the latter does not exist.)
+LOG_BITMASK 65535
+LOG_BACKEND_TYPE 1
+LOG_DISARMED 1
 
 # SITL speedup: 1x real-time
 SIM_SPEEDUP 1

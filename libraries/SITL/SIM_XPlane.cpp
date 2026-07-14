@@ -35,7 +35,6 @@
 #include <AP_Filesystem/AP_Filesystem.h>
 #include <SRV_Channel/SRV_Channel.h>
 #include <AP_Vehicle/AP_Vehicle_Type.h>
-#include <GCS_MAVLink/GCS.h>
 
 // ignore cast errors in this case to keep complexity down
 #pragma GCC diagnostic ignored "-Wcast-align"
@@ -96,6 +95,7 @@ enum {
 
 enum RREF {
     RREF_VERSION = 1,
+    RREF_DATE    = 2,   // sim/time/local_date_days (0-based day-of-year)
 };
 
 static const uint8_t required_data[] {
@@ -107,11 +107,11 @@ static const uint8_t required_data[] {
 
 using namespace SITL;
 
-// UTC midnight (seconds since 1970-01-01) of the firmware build date. __DATE__ is
-// "Mmm dd yyyy". X-Plane carries no year, so year/month/day come from the build and
-// only the time-of-day comes from X-Plane's zulu clock; the HIL firmware is rebuilt
-// often, so the build date tracks the flight date closely.
-static time_t build_date_midnight_utc(void)
+// Parse __DATE__ ("Mmm dd yyyy"): days from 1970-01-01 to Jan 1 of the build
+// YEAR (*days_year_start) and the build date's own 0-based day-of-year (*doy).
+// X-Plane has no year, so the year always comes from the build; the month+day
+// come from X-Plane's date dref when available, else from the build (*doy).
+static void build_year_start(int64_t *days_year_start, int64_t *doy)
 {
     const char *d = __DATE__;                 // e.g. "Jul 13 2026"
     static const char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
@@ -124,28 +124,47 @@ static time_t build_date_midnight_utc(void)
     auto is_leap = [](int y){ return (y%4==0 && y%100!=0) || y%400==0; };
     int64_t days = 0;
     for (int y=1970; y<year; y++) days += is_leap(y) ? 366 : 365;
+    *days_year_start = days;
     static const int mdays[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
-    for (int mo=0; mo<mon; mo++) days += mdays[mo] + ((mo==1 && is_leap(year)) ? 1 : 0);
-    days += day - 1;
-    return (time_t)(days * 86400LL);
+    int64_t dd = 0;
+    for (int mo=0; mo<mon; mo++) dd += mdays[mo] + ((mo==1 && is_leap(year)) ? 1 : 0);
+    dd += day - 1;
+    *doy = dd;
 }
 
-// Seed SITL start_time_UTC = (build-date 00:00 UTC) + X-Plane zulu time-of-day −
-// uptime, i.e. the UTC at boot. Without this, start_time_UTC stays 0 on HIL
-// hardware and the simulated GPS week/time underflows. Called once when the first
-// zulu arrives and again on every home reset, so the clock follows X-Plane (set to
-// real UTC). SIM_GPS::simulation_timeval re-reads start_time_UTC so it takes effect.
+// Seed SITL start_time_UTC so start_time_UTC + uptime == the current UTC epoch.
+// YEAR comes from the firmware build; day-of-year + time-of-day come from X-Plane
+// (set to real UTC). Without this, start_time_UTC stays 0 on HIL hardware and the
+// simulated GPS week/time underflows. Called once at the first zulu and again on
+// every home reset; SIM_GPS/AP_GPS_SITL re-read start_time_UTC so it takes effect.
 void XPlane::seed_start_time_utc(void)
 {
     if (xplane_zulu_sec < 0) {
         return;
     }
-    AP::sitl()->start_time_UTC = build_date_midnight_utc()
-        + (time_t)xplane_zulu_sec
+    int64_t days_year_start, build_doy;
+    build_year_start(&days_year_start, &build_doy);
+
+    // Absolute zulu seconds since 00:00 UTC of Jan 1 of the build year.
+    int64_t zulu_abs;
+    if (xplane_doy >= 0 && xplane_local_sec >= 0) {
+        // Date follows X-Plane. sim/time/local_date_days is the LOCAL day-of-year;
+        // convert to the zulu day using the tz offset implied by local−zulu
+        // time-of-day, so the calendar date matches the zulu clock even when the
+        // timezone pushes the local date across midnight (e.g. WICC is UTC+7).
+        int32_t tz = (int32_t)(xplane_local_sec + 0.5f) - (int32_t)(xplane_zulu_sec + 0.5f);
+        if (tz < -43200) { tz += 86400; } else if (tz > 50400) { tz -= 86400; }
+        // local_sec − tz == zulu time-of-day (may be <0 or ≥86400 → day-wrap,
+        // absorbed by the day-of-year term below).
+        const int32_t zulu_tod = (int32_t)(xplane_local_sec + 0.5f) - tz;
+        zulu_abs = (int64_t)xplane_doy * 86400 + zulu_tod;
+    } else {
+        // Date dref not received yet — fall back to the build date's day-of-year.
+        zulu_abs = build_doy * 86400 + (int64_t)(xplane_zulu_sec + 0.5f);
+    }
+    AP::sitl()->start_time_UTC = (time_t)(days_year_start * 86400LL + zulu_abs)
         - (time_t)(AP_HAL::micros64() / 1000000ULL);
     time_synced = true;
-    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "GPS UTC seeded start=%ld zulu=%.0f",
-                  (long)AP::sitl()->start_time_UTC, (double)xplane_zulu_sec);
 }
 
 XPlane::XPlane(const char *frame_str) :
@@ -530,18 +549,13 @@ bool XPlane::receive_data(void)
             {
                 const float z = data[6];
                 xplane_zulu_sec = (z >= 0 && z <= 24.0f) ? z * 3600.0f : z;
+                // Local time-of-day (field 6/data[7]) — used to derive the tz
+                // offset so X-Plane's LOCAL date can be mapped to the zulu date.
+                const float lz = data[7];
+                xplane_local_sec = (lz >= 0 && lz <= 24.0f) ? lz * 3600.0f : lz;
                 if (dref_debug) {
                     printf("XP Times f4=%.1f f5(zulu)=%.4f f6(locl)=%.4f -> %.0fs\n",
                            data[5], data[6], data[7], (double)xplane_zulu_sec);
-                }
-                // TEMP runtime probe over MAVLink: shows exactly which fields the
-                // running firmware reads until the clock is synced, then goes quiet.
-                static uint32_t last_dbg_ms;
-                const uint32_t now_ms = AP_HAL::millis();
-                if (!time_synced && now_ms - last_dbg_ms > 2000) {
-                    last_dbg_ms = now_ms;
-                    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "XPz f4=%.0f f5=%.3f f6=%.3f zs=%.0f",
-                                  data[5], data[6], data[7], (double)xplane_zulu_sec);
                 }
                 if (!time_synced) {
                     seed_start_time_utc();   // one-time sync at first zulu (startup)
@@ -759,21 +773,41 @@ failed:
 */
 void XPlane::handle_rref(const uint8_t *pkt, uint32_t len)
 {
+    if (len < 5) {
+        return;
+    }
+    // X-Plane batches every active RREF subscription into one packet as a run of
+    // 8-byte (uint32 code, float value) entries after the 5-byte "RREF\0" header.
+    // Iterate them all — earlier code read only the first, so a second dref (the
+    // date) would have been dropped. memcpy each entry to dodge unaligned loads.
     const uint8_t *p = &pkt[5];
-    const struct PACKED RRefPacket {
-        uint32_t code;
-        union PACKED {
-            float value_f;
-            double value_d;
-        };
-    } *ref = (const struct RRefPacket *)p;
-    switch (ref->code) {
-    case RREF_VERSION:
-        if (xplane_version == 0) {
-            ::printf("XPlane version %.0f\n", ref->value_f);
+    const uint32_t n = (len - 5) / 8;
+    for (uint32_t i = 0; i < n; i++) {
+        struct PACKED { uint32_t code; float value; } e;
+        memcpy(&e, p + i * 8, sizeof(e));
+        switch (e.code) {
+        case RREF_VERSION:
+            if (xplane_version == 0) {
+                ::printf("XPlane version %.0f\n", (double)e.value);
+            }
+            xplane_version = uint32_t(e.value);
+            break;
+        case RREF_DATE: {
+            // sim/time/local_date_days: 0-based day-of-year (Jan 1 = 0).
+            const int doy = (int)(e.value + 0.5f);
+            const bool first = (xplane_doy < 0);
+            xplane_doy = doy;
+            // If the clock was already seeded from the build date's day-of-year
+            // (date dref arrived after the first zulu), re-apply now so the
+            // calendar date follows X-Plane. Forward-only in practice: X-Plane's
+            // date is normally on/after the build date (AP_RTC rejects backward
+            // jumps), so this corrects a stale build without rolling time back.
+            if (first && time_synced) {
+                seed_start_time_utc();
+            }
+            break;
         }
-        xplane_version = uint32_t(ref->value_f);
-        break;
+        }
     }
 }
 
@@ -882,6 +916,9 @@ void XPlane::request_dref(const char *name, uint8_t code, uint32_t rate)
 void XPlane::request_drefs(void)
 {
     request_dref("sim/version/xplane_internal_version", RREF_VERSION, 1);
+    // Day-of-year for the GPS calendar date (year comes from the build). 1 Hz is
+    // plenty — the clock advances on its own once seeded; see seed_start_time_utc.
+    request_dref("sim/time/local_date_days", RREF_DATE, 1);
 }
 
 /*

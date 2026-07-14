@@ -12,6 +12,7 @@
 
 #include <time.h>
 #include <sys/time.h>
+#include <stdlib.h>
 
 #include <AP_BoardConfig/AP_BoardConfig.h>
 #include <AP_HAL/AP_HAL.h>
@@ -259,13 +260,45 @@ ssize_t GPS::write_to_autopilot(const char *p, size_t size) const
 /*
   get timeval using simulation time
  */
+// UTC midnight (seconds since 1970) of the firmware build date, from __DATE__
+// ("Mmm dd yyyy"). Used as a provisional GPS-time base on HIL before X-Plane's
+// zulu clock has seeded start_time_UTC, so the first GPS fix reports a sane ~build
+// date instead of an underflowed far-future time. It is always EARLIER than the
+// real (zulu-corrected) time, so the later correction moves the clock FORWARD --
+// which AP_RTC accepts (it refuses backwards jumps, latching the bad value).
+static time_t sim_build_date_midnight_utc(void)
+{
+    const char *d = __DATE__;
+    static const char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    int mon = 0;
+    for (int i=0; i<12; i++) {
+        if (d[0]==months[i*3] && d[1]==months[i*3+1] && d[2]==months[i*3+2]) { mon = i; break; }
+    }
+    const int day  = atoi(d+4);
+    const int year = atoi(d+7);
+    auto is_leap = [](int y){ return (y%4==0 && y%100!=0) || y%400==0; };
+    int64_t days = 0;
+    for (int y=1970; y<year; y++) days += is_leap(y) ? 366 : 365;
+    static const int mdays[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    for (int mo=0; mo<mon; mo++) days += mdays[mo] + ((mo==1 && is_leap(year)) ? 1 : 0);
+    days += day - 1;
+    return (time_t)(days * 86400LL);
+}
+
 void GPS_Backend::simulation_timeval(struct timeval *tv)
 {
     // Re-read start_time_UTC every call (no first_tv cache) so re-seeding it at an
     // X-Plane home reset (SIM_XPlane::seed_start_time_utc) immediately updates the
     // simulated GPS time instead of being frozen at the first-fix value.
     const uint64_t now = AP_HAL::micros64();
-    tv->tv_sec  = AP::sitl()->start_time_UTC + (time_t)(now / 1000000ULL);
+    time_t base = AP::sitl()->start_time_UTC;
+    if (base == 0) {
+        // Not yet seeded (HIL: no SITL_cmdline, waiting on X-Plane zulu). Fall back
+        // to the build-date midnight so the GPS never reports an underflowed time
+        // that AP_RTC would latch and then refuse to correct downward.
+        base = sim_build_date_midnight_utc();
+    }
+    tv->tv_sec  = base + (time_t)(now / 1000000ULL);
     tv->tv_usec = now % 1000000ULL;
 }
 

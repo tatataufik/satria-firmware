@@ -28,23 +28,49 @@ extern const AP_HAL::HAL& hal;
 /*
   return GPS time of week in milliseconds
  */
+
+// UTC midnight (seconds since 1970) of the firmware build date, from __DATE__
+// ("Mmm dd yyyy").
+static time_t sitl_build_date_midnight_utc(void)
+{
+    const char *d = __DATE__;
+    static const char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    int mon = 0;
+    for (int i=0; i<12; i++) {
+        if (d[0]==months[i*3] && d[1]==months[i*3+1] && d[2]==months[i*3+2]) { mon = i; break; }
+    }
+    const int day  = atoi(d+4);
+    const int year = atoi(d+7);
+    auto is_leap = [](int y){ return (y%4==0 && y%100!=0) || y%400==0; };
+    int64_t days = 0;
+    for (int y=1970; y<year; y++) days += is_leap(y) ? 366 : 365;
+    static const int mdays[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    for (int mo=0; mo<mon; mo++) days += mdays[mo] + ((mo==1 && is_leap(year)) ? 1 : 0);
+    days += day - 1;
+    return (time_t)(days * 86400LL);
+}
+
 /*
   get timeval using simulation time
  */
 static void simulation_timeval(struct timeval *tv)
 {
-    uint64_t now = AP_HAL::micros64();
-    static uint64_t first_usec;
-    static struct timeval first_tv;
-    if (first_usec == 0) {
-        first_usec = now;
-        first_tv.tv_sec = AP::sitl()->start_time_UTC;
+    const uint64_t now = AP_HAL::micros64();
+    // Re-read start_time_UTC every call (no first_tv cache): on HIL hardware it is 0
+    // at boot and only gets seeded later from X-Plane's zulu clock
+    // (SIM_XPlane::seed_start_time_utc). Caching it would freeze the GPS at the
+    // pre-seed (underflowed) time and never pick up the correction.
+    time_t base = AP::sitl()->start_time_UTC;
+    if (base == 0) {
+        // Not yet seeded. Fall back to the build-date midnight so the first GPS fix
+        // reports a sane ~build-date time instead of an underflowed far-future one.
+        // It is always earlier than the real zulu-corrected time, so the later
+        // correction moves the clock FORWARD -- which AP_RTC accepts (it refuses
+        // backward jumps and would otherwise latch the bad value permanently).
+        base = sitl_build_date_midnight_utc();
     }
-    *tv = first_tv;
-    tv->tv_sec += now / 1000000ULL;
-    uint64_t new_usec = tv->tv_usec + (now % 1000000ULL);
-    tv->tv_sec += new_usec / 1000000ULL;
-    tv->tv_usec = new_usec % 1000000ULL;
+    tv->tv_sec  = base + (time_t)(now / 1000000ULL);
+    tv->tv_usec = now % 1000000ULL;
 }
 static void gps_time(uint16_t *time_week, uint32_t *time_week_ms)
 {

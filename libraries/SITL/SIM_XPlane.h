@@ -82,6 +82,13 @@ private:
     // received. Seeds SITL start_time_UTC (year/date from build) so the simulated
     // GPS reports a sane UTC instead of underflowing.
     float xplane_zulu_sec = -1;
+    // Local time-of-day (sec since 00:00 local) from X-Plane row 1 field 6; used
+    // with zulu to derive the tz offset so the LOCAL date dref maps to the zulu
+    // date. -1 = not yet received.
+    float xplane_local_sec = -1;
+    // 0-based day-of-year from sim/time/local_date_days (RREF). -1 = not yet
+    // received → fall back to the build date's day-of-year.
+    int xplane_doy = -1;
     bool time_synced = false;
     void seed_start_time_utc(void);
     bool connected = false;

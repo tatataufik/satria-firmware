@@ -597,6 +597,8 @@ public:
     AP_Float tracking_target_lat;    // TRK_TGT_LAT:     target latitude (decimal degrees)
     AP_Float tracking_target_lon;    // TRK_TGT_LON:     target longitude (decimal degrees)
     AP_Float tracking_close_m;       // TRK_CLOSE_M:     horizontal proximity threshold (m); GCS alert when drone enters/exits this radius
+    AP_Float tracking_pilot_roll;    // TRK_PLT_RLL:     max pilot roll bias added on top of the seeker command (deg); 0 disables
+    AP_Float tracking_pilot_pitch;   // TRK_PLT_PTC:     max pilot pitch bias added on top of the seeker command (deg); 0 disables
     // Throttle defaults: P=10 %/rad, I=2, D=0, imax=50 %
     AC_PID tracking_throt_pid{10.0f, 2.0f, 0.0f, 0.0f, 50.0f, 0.0f, 0.0f, 20.0f, 0.0f};
 

@@ -1389,6 +1389,24 @@ const AP_Param::GroupInfo ParametersG2::var_info[] = {
     // @User: Standard
     AP_GROUPINFO("TRK_CLOSE_M", 61, ParametersG2, tracking_close_m, 1000.0f),
 
+    // @Param: TRK_PLT_RLL
+    // @DisplayName: Tracking pilot roll bias limit
+    // @Description: Maximum roll bias (deg) the pilot may add on top of the seeker command while in TRACKING. The stick does not replace the seeker: its contribution is bounded by this value and summed with the tracking PID output, so the seeker keeps authority and the mode is not cancelled. While the stick is outside its deadzone the roll integrator is frozen, preventing wind-up against a sustained pilot hold. 0 disables pilot bias and restores seeker-only behaviour.
+    // @Units: deg
+    // @Range: 0 30
+    // @Increment: 1
+    // @User: Standard
+    AP_GROUPINFO("TRK_PLT_RLL", 58, ParametersG2, tracking_pilot_roll, 0.0f),
+
+    // @Param: TRK_PLT_PTC
+    // @DisplayName: Tracking pilot pitch bias limit
+    // @Description: Maximum pitch bias (deg) the pilot may add on top of the seeker command while in TRACKING. Same rule as TRK_PLT_RLL: bounded, summed, integrator frozen while the stick is active. 0 disables pilot bias.
+    // @Units: deg
+    // @Range: 0 30
+    // @Increment: 1
+    // @User: Standard
+    AP_GROUPINFO("TRK_PLT_PTC", 59, ParametersG2, tracking_pilot_pitch, 0.0f),
+
     AP_GROUPEND
 };
 

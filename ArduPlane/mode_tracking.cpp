@@ -113,19 +113,49 @@ void ModeTracking::update()
                                            0.0f, settle_s);
     const float ramp     = (settle_s > 0.0f) ? (elapsed / settle_s) : 1.0f;
 
+    // ── Pilot bias ────────────────────────────────────────────────────────────
+    // The stick does NOT replace the seeker and does not cancel the mode: it adds
+    // a bounded offset on top of the tracking command, so the pilot can nudge the
+    // aim while the seeker keeps authority. norm_input_dz() is zero inside the
+    // configured stick deadzone, so a centred stick contributes exactly nothing.
+    // TRK_PLT_RLL / TRK_PLT_PTC default to 0, which disables this path entirely
+    // and reproduces the previous seeker-only behaviour bit for bit.
+    //
+    // The bias is deliberately NOT multiplied by `ramp`. The ramp exists to stop
+    // the PID snapping to full authority on mode entry; the pilot term is already
+    // bounded by its own limit, and delaying the pilot's correction is the
+    // opposite of what it is for.
+    const float plt_roll_max  = plane.g2.tracking_pilot_roll.get();
+    const float plt_pitch_max = plane.g2.tracking_pilot_pitch.get();
+    const float plt_roll_cd   = is_positive(plt_roll_max)
+                              ? plane.channel_roll->norm_input_dz()  * plt_roll_max  * 100.0f
+                              : 0.0f;
+    const float plt_pitch_cd  = is_positive(plt_pitch_max)
+                              ? plane.channel_pitch->norm_input_dz() * plt_pitch_max * 100.0f
+                              : 0.0f;
+
+    // Freeze the integrator while the pilot holds a bias. The seeker loop closes
+    // through the camera: a sustained stick offset moves the target off centre,
+    // so the I term would wind up opposing the pilot and then dump that whole
+    // accumulation the instant the stick is released. i_scale=0 stops integration
+    // for this cycle without discarding what was already learned.
+    const float roll_i_scale  = is_zero(plt_roll_cd)  ? 1.0f : 0.0f;
+    const float pitch_i_scale = is_zero(plt_pitch_cd) ? 1.0f : 0.0f;
+
     // ── Roll PID ──────────────────────────────────────────────────────────────
     if (is_zero(ex_raw)) {
         plane.g2.tracking_roll_pid.reset_I();
         // Active damping: oppose roll rate to hold wings level.
         const float roll_rate_dps = degrees(ahrs.get_gyro().x);
         const float damp_cd       = -(roll_rate_dps * 15.0f);
-        plane.nav_roll_cd = constrain_int32((int32_t)damp_cd,
+        plane.nav_roll_cd = constrain_int32((int32_t)(damp_cd + plt_roll_cd),
                                             -plane.roll_limit_cd,
                                              plane.roll_limit_cd);
     } else {
         const float roll_cd = plane.g2.tracking_roll_pid.update_all(
-                                  degrees(ex_raw), 0.0f, dt_s) * ramp;
-        plane.nav_roll_cd   = constrain_int32((int32_t)roll_cd,
+                                  degrees(ex_raw), 0.0f, dt_s,
+                                  false, 1.0f, roll_i_scale) * ramp;
+        plane.nav_roll_cd   = constrain_int32((int32_t)(roll_cd + plt_roll_cd),
                                               -plane.roll_limit_cd,
                                                plane.roll_limit_cd);
     }
@@ -138,13 +168,15 @@ void ModeTracking::update()
         plane.g2.tracking_pitch_pid.reset_I();
     } else {
         pitch_correction_cd = plane.g2.tracking_pitch_pid.update_all(
-                                  degrees(ey_raw), 0, dt_s)*ramp;
+                                  degrees(ey_raw), 0, dt_s,
+                                  false, 1.0f, pitch_i_scale)*ramp;
     }
     // Ramp applied to the full expression (offset + correction together) so
     // nav_pitch starts at 0 on mode entry and grows smoothly — prevents the
     // offset from snapping to full authority before the seeker can respond.
+    // The pilot bias is added after the ramp, for the reason given above.
     plane.nav_pitch_cd = constrain_int32(
-                             (int32_t)(pitch_correction_cd),
+                             (int32_t)(pitch_correction_cd + plt_pitch_cd),
                              (int32_t)(plane.pitch_limit_min * 100),
                              plane.aparm.pitch_limit_max.get() * 100);
 
@@ -174,6 +206,15 @@ void ModeTracking::update()
                             (double)degrees(nav_pitch_rad),
                             (double)degrees(pitch_err),
                             (double)(throttle));
+            // Only emitted while the pilot is actually biasing, so post-flight
+            // analysis can tell a seeker command apart from a pilot correction
+            // instead of reading nav_roll/nav_pitch as pure seeker output.
+            if (!is_zero(plt_roll_cd) || !is_zero(plt_pitch_cd)) {
+                gcs().send_text(MAV_SEVERITY_INFO,
+                                "TRK pilot bias r=%.1fdeg p=%.1fdeg",
+                                (double)(plt_roll_cd  * 0.01f),
+                                (double)(plt_pitch_cd * 0.01f));
+            }
         }
         SRV_Channels::set_output_scaled(SRV_Channel::k_throttle, throttle);
     }
